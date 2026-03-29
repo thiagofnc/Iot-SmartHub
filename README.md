@@ -1,10 +1,5 @@
 ﻿# IoT-SmartHub
 
-This repository currently contains the pieces needed to set up a PlatformIO project for the Elecrow 7.0-inch CrowPanel ESP32-S3:
-
-- `esp32-s3-devkitc-1-myboard.json`: the custom PlatformIO board definition already configured for the Elecrow board.
-- `platformio_setup.png`: a screenshot showing the expected PlatformIO project wizard settings.
-
 ## PlatformIO Setup
 
 1. Install Visual Studio Code and the PlatformIO IDE extension.
@@ -31,12 +26,6 @@ build_flags =
   -D LV_LVGL_H_INCLUDE_SIMPLE
   -I./include
 ```
-
-## Notes
-
-- The board ID is `esp32-s3-devkitc-1-myboard`, which comes from the filename `esp32-s3-devkitc-1-myboard.json`.
-- The included board file already carries the Elecrow board name, PSRAM-related flags, `huge_app.csv` partitions, and the upload speed expected by the panel setup.
-- If the custom board does not appear in PlatformIO after copying the file, restart VS Code again and confirm the JSON is in the `boards` folder above.
 
 ## Reference
 
