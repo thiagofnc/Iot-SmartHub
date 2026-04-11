@@ -75,5 +75,8 @@ classDiagram
 
     %% Wireless Links
     Lora_Receiver <.. Lora_Transmitter : LoRa (Wireless)
-    BLE_Cam_Receiver <.. "Xiao Camera Node" : BLE (Wireless)
+    class Xiao_Camera_Node {
+        <<External>>
+    }
+    BLE_Cam_Receiver <.. Xiao_Camera_Node : BLE (Wireless)
 ```
