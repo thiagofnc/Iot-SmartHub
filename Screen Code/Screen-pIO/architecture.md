@@ -19,11 +19,7 @@ classDiagram
             +updateValues()
             +handleSwipes()
         }
-        class Motor {
-            -pos: int
-            +init()
-            +rotate(deg)
-        }
+        
         class WebServer {
             -ip: string
             -port: int
@@ -31,11 +27,7 @@ classDiagram
             +sendData(data)
             +getRequest()
         }
-        class Lora_Receiver {
-            -freq: float
-            +init()
-            +receivePacket()
-        }
+        
         class BLE_Cam_Receiver {
             -img: data
             +init()
@@ -45,12 +37,41 @@ classDiagram
 
     Hub_Main --> DisplayManager : Renders to
     Hub_Main --> WebServer : Hosts
-    Hub_Main --> Lora_Receiver : Polls data
     Hub_Main --> BLE_Cam_Receiver : Polls gestures
-    Hub_Main --> Motor : Commands
+
+
+
+    namespace Remote_Lora_Receiver {
+
+
+        class Receiver_Main {
+            +init()
+            +loop()
+
+        }
+
+        class Lora_Receiver {
+            -freq: float
+            +init()
+            +receivePacket()
+        }
+
+        class Motor {
+            -pos: int
+            +init()
+            +rotate(deg)
+        }
+
+
+    }
+
+     Receiver_Main --> Lora_Receiver : Polls data
+     Receiver_Main --> Motor: Commands
+
+
 
     namespace Remote_Lora_Node {
-        class Node_Main {
+        class Sender_Main {
             +init()
             +loop()
             +deepSleep()
@@ -70,11 +91,13 @@ classDiagram
         }
     }
 
-    Node_Main --> Env_Sensor : Reads
-    Node_Main --> Lora_Transmitter : Broadcasts
+    Sender_Main --> Env_Sensor : Reads
+    Sender_Main --> Lora_Transmitter : Broadcasts
+
 
     %% Wireless Links
     Lora_Receiver <.. Lora_Transmitter : LoRa (Wireless)
+    Lora_Receiver <.. Hub_Main : Process Data (Wired)
     class Xiao_Camera_Node {
         <<External>>
     }
