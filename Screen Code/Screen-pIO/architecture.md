@@ -19,25 +19,9 @@ classDiagram
             +updateValues()
             +handleSwipes()
         }
-        
-        class WebServer {
-            -ip: string
-            -port: int
-            +init()
-            +sendData(data)
-            +getRequest()
-        }
-        
-        class BLE_Cam_Receiver {
-            -img: data
-            +init()
-            +processGesture()
-        }
     }
 
     Hub_Main --> DisplayManager : Renders to
-    Hub_Main --> WebServer : Hosts
-    Hub_Main --> BLE_Cam_Receiver : Polls gestures
 
 
 
@@ -62,11 +46,25 @@ classDiagram
             +rotate(deg)
         }
 
-
+        class WebServer {
+            -ip: string
+            -port: int
+            +init()
+            +sendData(data)
+            +getRequest()
+        }
+        
+        class BLE_Cam_Receiver {
+            -img: data
+            +init()
+            +processGesture()
+        }
     }
 
      Receiver_Main --> Lora_Receiver : Polls data
      Receiver_Main --> Motor: Commands
+     Receiver_Main --> WebServer : Hosts
+     Receiver_Main --> BLE_Cam_Receiver : Polls gestures
 
 
 
@@ -101,5 +99,5 @@ classDiagram
     class Xiao_Camera_Node {
         <<External>>
     }
-    BLE_Cam_Receiver <.. Xiao_Camera_Node : BLE (Wireless)
+    BLE_Cam_Receiver <.. Xiao_Camera_Node : I2C
 ```
