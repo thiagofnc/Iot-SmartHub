@@ -97,7 +97,7 @@ classDiagram
 
     %% Wireless Links
     Lora_Receiver <.. Lora_Transmitter : LoRa (Wireless)
-    Lora_Receiver <.. Hub_Main : Process Data (Wired)
+    Hub_Main <.. Lora_Receiver : Process Data (Wired)
     class Xiao_Camera_Node {
         <<External>>
     }
