@@ -16,7 +16,6 @@ class CrowPanelDisplay : public lgfx::LGFX_Device {
 public:
   lgfx::Bus_RGB bus;
   lgfx::Panel_RGB panel;
-  lgfx::Touch_GT911 touch;
 
   explicit CrowPanelDisplay(CrowPanelModel model = CrowPanelModel::FiveInch) {
     {
@@ -109,25 +108,6 @@ public:
     }
 
     panel.setBus(&bus);
-
-    {
-      auto cfg = touch.config();
-      cfg.x_min = 0;
-      cfg.x_max = 800;
-      cfg.y_min = 0;
-      cfg.y_max = 480;
-      cfg.pin_int = -1;
-      cfg.bus_shared = false;
-      cfg.offset_rotation = 0;
-      cfg.i2c_port = I2C_NUM_0;
-      cfg.pin_sda = GPIO_NUM_19;
-      cfg.pin_scl = GPIO_NUM_20;
-      cfg.pin_rst = -1;
-      cfg.freq = 400000;
-      cfg.i2c_addr = 0x5D;
-      touch.config(cfg);
-      panel.setTouch(&touch);
-    }
 
     setPanel(&panel);
   }

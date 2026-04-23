@@ -28,15 +28,35 @@ constexpr int BACKLIGHT_FREQUENCY_HZ = 300;
 constexpr int BACKLIGHT_RESOLUTION_BITS = 8;
 constexpr uint8_t BACKLIGHT_BRIGHTNESS = 255;
 constexpr size_t DRAW_BUFFER_PIXEL_COUNT = SCREEN_WIDTH * 40;
+constexpr uint16_t STARTUP_GALLERY_ICON_SIZE = 32;
+constexpr uint32_t STARTUP_GALLERY_MS = 5000UL;
+constexpr uint16_t LIFE_CELL_SIZE = 4;
+constexpr uint16_t LIFE_COLS = SCREEN_WIDTH / LIFE_CELL_SIZE;
+constexpr uint16_t LIFE_ROWS = SCREEN_HEIGHT / LIFE_CELL_SIZE;
+constexpr uint32_t LIFE_STEP_MS = 90UL;
+constexpr uint8_t LIFE_SEED_DENSITY_PERCENT = 35;
+constexpr uint16_t LIFE_RESEED_GENERATIONS = 128;
 
 // Elecrow's 5-inch and 7-inch 800x480 HMI boards use different RGB mappings.
 // If your panel is the 7-inch model, change this to CrowPanelModel::SevenInch.
 constexpr CrowPanelModel DISPLAY_MODEL = CrowPanelModel::SevenInch;
 
+enum class ScreenMode {
+  Weather,
+  Clock,
+  Life,
+};
+
 CrowPanelDisplay display(DISPLAY_MODEL);
 lv_disp_draw_buf_t drawBuffer;
 lv_color_t *drawBufferA = nullptr;
 lv_color_t weatherIconCanvasBuffer[kOpenWeatherIconWidth * kOpenWeatherIconHeight];
+constexpr const char *kStartupGalleryCodes[] = {
+    "01d", "01n", "02d", "02n", "03d", "03n", "04d", "04n", "09d",
+    "09n", "10d", "10n", "11d", "11n", "13d", "13n", "50d", "50n",
+};
+constexpr size_t kStartupGalleryCount = sizeof(kStartupGalleryCodes) / sizeof(kStartupGalleryCodes[0]);
+lv_color_t startupGalleryBuffers[kStartupGalleryCount][STARTUP_GALLERY_ICON_SIZE * STARTUP_GALLERY_ICON_SIZE];
 
 struct WeatherData {
   bool valid = false;
@@ -61,6 +81,7 @@ struct WeatherData {
 };
 
 struct DashboardUi {
+  lv_obj_t *dashboardRoot = nullptr;
   lv_obj_t *hero = nullptr;
   lv_obj_t *iconCard = nullptr;
   lv_obj_t *iconTitle = nullptr;
@@ -80,10 +101,24 @@ struct DashboardUi {
   lv_obj_t *visibility = nullptr;
 } ui;
 
+struct ClockUi {
+  lv_obj_t *clockRoot = nullptr;
+  lv_obj_t *time = nullptr;
+  lv_obj_t *date = nullptr;
+  lv_obj_t *location = nullptr;
+  lv_obj_t *footer = nullptr;
+} clockUi;
+
 WeatherData weatherData;
+ScreenMode currentScreenMode = ScreenMode::Weather;
 unsigned long lastWeatherAttempt = 0;
 unsigned long lastClockTick = 0;
 long currentLocalEpochUtc = 0;
+unsigned long lastLifeStep = 0;
+uint32_t lifeGeneration = 0;
+uint8_t *lifeCurrent = nullptr;
+uint8_t *lifeNext = nullptr;
+uint16_t *lifeFrameBuffer = nullptr;
 
 String formatLocalTime(long epochUtc, long timezoneOffsetSeconds) {
   if (epochUtc <= 0) {
@@ -96,6 +131,20 @@ String formatLocalTime(long epochUtc, long timezoneOffsetSeconds) {
 
   char buffer[24];
   strftime(buffer, sizeof(buffer), "%I:%M %p", &timeInfo);
+  return String(buffer);
+}
+
+String formatLocalDate(long epochUtc, long timezoneOffsetSeconds) {
+  if (epochUtc <= 0) {
+    return "Waiting for time";
+  }
+
+  const time_t localEpoch = static_cast<time_t>(epochUtc + timezoneOffsetSeconds);
+  struct tm timeInfo;
+  gmtime_r(&localEpoch, &timeInfo);
+
+  char buffer[48];
+  strftime(buffer, sizeof(buffer), "%A, %B %d", &timeInfo);
   return String(buffer);
 }
 
@@ -155,20 +204,24 @@ void displayFlush(lv_disp_drv_t *dispDrv, const lv_area_t *area, lv_color_t *col
   lv_disp_flush_ready(dispDrv);
 }
 
-void touchRead(lv_indev_drv_t *indevDrv, lv_indev_data_t *data) {
-  (void)indevDrv;
-  uint16_t x = 0;
-  uint16_t y = 0;
-  const bool touched = display.getTouch(&x, &y);
-  data->state = touched ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
-  data->point.x = x;
-  data->point.y = y;
-}
-
 void setBacklight(uint8_t brightness) {
   ledcSetup(BACKLIGHT_CHANNEL, BACKLIGHT_FREQUENCY_HZ, BACKLIGHT_RESOLUTION_BITS);
   ledcAttachPin(BACKLIGHT_PIN, BACKLIGHT_CHANNEL);
   ledcWrite(BACKLIGHT_CHANNEL, brightness);
+}
+
+void renderIconToBuffer(const char *iconCode, lv_color_t *buffer, uint16_t width, uint16_t height) {
+  const uint8_t *rgbData = getOpenWeatherIconAsset(iconCode);
+
+  for (uint16_t y = 0; y < height; ++y) {
+    const uint16_t srcY = static_cast<uint16_t>((static_cast<uint32_t>(y) * kOpenWeatherIconHeight) / height);
+    for (uint16_t x = 0; x < width; ++x) {
+      const uint16_t srcX = static_cast<uint16_t>((static_cast<uint32_t>(x) * kOpenWeatherIconWidth) / width);
+      const size_t srcOffset = (static_cast<size_t>(srcY) * kOpenWeatherIconWidth + srcX) * 3;
+      buffer[static_cast<size_t>(y) * width + x] =
+          lv_color_make(rgbData[srcOffset], rgbData[srcOffset + 1], rgbData[srcOffset + 2]);
+    }
+  }
 }
 
 lv_obj_t *createStyledBlock(lv_obj_t *parent, lv_color_t bgColor, lv_opa_t bgOpacity, int radius) {
@@ -180,15 +233,261 @@ lv_obj_t *createStyledBlock(lv_obj_t *parent, lv_color_t bgColor, lv_opa_t bgOpa
   return obj;
 }
 
-void updateWeatherIcon() {
-  const char *iconCode = weatherData.iconCode.isEmpty() ? "03d" : weatherData.iconCode.c_str();
-  const uint8_t *rgbData = getOpenWeatherIconAsset(iconCode);
+uint16_t wrapLifeX(int value) {
+  if (value < 0) {
+    return LIFE_COLS - 1;
+  }
+  if (value >= LIFE_COLS) {
+    return 0;
+  }
+  return static_cast<uint16_t>(value);
+}
 
-  for (size_t i = 0; i < (kOpenWeatherIconWidth * kOpenWeatherIconHeight); ++i) {
-    const size_t pixelOffset = i * 3;
-    weatherIconCanvasBuffer[i] = lv_color_make(rgbData[pixelOffset], rgbData[pixelOffset + 1], rgbData[pixelOffset + 2]);
+uint16_t wrapLifeY(int value) {
+  if (value < 0) {
+    return LIFE_ROWS - 1;
+  }
+  if (value >= LIFE_ROWS) {
+    return 0;
+  }
+  return static_cast<uint16_t>(value);
+}
+
+size_t lifeIndex(uint16_t row, uint16_t col) {
+  return static_cast<size_t>(row) * LIFE_COLS + col;
+}
+
+void initLifeBuffers() {
+  const size_t cellCount = static_cast<size_t>(LIFE_ROWS) * LIFE_COLS;
+  lifeCurrent = static_cast<uint8_t *>(heap_caps_malloc(cellCount, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  lifeNext = static_cast<uint8_t *>(heap_caps_malloc(cellCount, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  lifeFrameBuffer = static_cast<uint16_t *>(
+      heap_caps_malloc(static_cast<size_t>(SCREEN_WIDTH) * SCREEN_HEIGHT * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+
+  if (lifeCurrent == nullptr || lifeNext == nullptr || lifeFrameBuffer == nullptr) {
+    Serial.println("Failed to allocate Game of Life buffers");
+    while (true) {
+      delay(1000);
+    }
   }
 
+  memset(lifeCurrent, 0, cellCount);
+  memset(lifeNext, 0, cellCount);
+  memset(lifeFrameBuffer, 0, static_cast<size_t>(SCREEN_WIDTH) * SCREEN_HEIGHT * sizeof(uint16_t));
+}
+
+uint8_t countLifeNeighbors(uint16_t row, uint16_t col) {
+  uint8_t neighbors = 0;
+  for (int dy = -1; dy <= 1; ++dy) {
+    for (int dx = -1; dx <= 1; ++dx) {
+      if (dx == 0 && dy == 0) {
+        continue;
+      }
+      neighbors += lifeCurrent[lifeIndex(wrapLifeY(static_cast<int>(row) + dy),
+                                         wrapLifeX(static_cast<int>(col) + dx))]
+                       ? 1
+                       : 0;
+    }
+  }
+  return neighbors;
+}
+
+uint16_t rainbowColor565(uint8_t phase) {
+  const uint8_t segment = phase / 43;
+  const uint8_t offset = (phase % 43) * 6;
+
+  uint8_t red = 0;
+  uint8_t green = 0;
+  uint8_t blue = 0;
+
+  switch (segment) {
+    case 0:
+      red = 255;
+      green = offset;
+      blue = 0;
+      break;
+    case 1:
+      red = static_cast<uint8_t>(255 - offset);
+      green = 255;
+      blue = 0;
+      break;
+    case 2:
+      red = 0;
+      green = 255;
+      blue = offset;
+      break;
+    case 3:
+      red = 0;
+      green = static_cast<uint8_t>(255 - offset);
+      blue = 255;
+      break;
+    case 4:
+      red = offset;
+      green = 0;
+      blue = 255;
+      break;
+    default:
+      red = 255;
+      green = 0;
+      blue = static_cast<uint8_t>(255 - offset);
+      break;
+  }
+
+  return display.color565(red, green, blue);
+}
+
+void seedLifeBoard() {
+  for (uint16_t row = 0; row < LIFE_ROWS; ++row) {
+    for (uint16_t col = 0; col < LIFE_COLS; ++col) {
+      lifeCurrent[lifeIndex(row, col)] = (random(100) < LIFE_SEED_DENSITY_PERCENT) ? 1 : 0;
+      lifeNext[lifeIndex(row, col)] = 0;
+    }
+  }
+  lifeGeneration = 0;
+}
+
+void renderLifeBoard() {
+  for (uint16_t row = 0; row < LIFE_ROWS; ++row) {
+    const uint16_t yStart = row * LIFE_CELL_SIZE;
+    for (uint16_t col = 0; col < LIFE_COLS; ++col) {
+      uint16_t color = TFT_BLACK;
+      if (lifeCurrent[lifeIndex(row, col)]) {
+        const uint8_t hue =
+            static_cast<uint8_t>((col * 7 + row * 11 + static_cast<uint16_t>(lifeGeneration * 5)) & 0xFF);
+        color = rainbowColor565(hue);
+      }
+      const uint16_t xStart = col * LIFE_CELL_SIZE;
+      for (uint16_t py = 0; py < LIFE_CELL_SIZE; ++py) {
+        uint16_t *line = lifeFrameBuffer + static_cast<size_t>(yStart + py) * SCREEN_WIDTH + xStart;
+        for (uint16_t px = 0; px < LIFE_CELL_SIZE; ++px) {
+          line[px] = color;
+        }
+      }
+    }
+  }
+  display.pushImage(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, lifeFrameBuffer);
+}
+
+void stepLifeBoard() {
+  uint16_t aliveCount = 0;
+  for (uint16_t row = 0; row < LIFE_ROWS; ++row) {
+    for (uint16_t col = 0; col < LIFE_COLS; ++col) {
+      const uint8_t neighbors = countLifeNeighbors(row, col);
+      const bool alive = lifeCurrent[lifeIndex(row, col)] > 0;
+      const bool nextAlive = (alive && (neighbors == 2 || neighbors == 3)) || (!alive && neighbors == 3);
+      lifeNext[lifeIndex(row, col)] = nextAlive ? 1 : 0;
+      aliveCount += nextAlive ? 1 : 0;
+    }
+  }
+
+  const size_t cellCount = static_cast<size_t>(LIFE_ROWS) * LIFE_COLS;
+  memcpy(lifeCurrent, lifeNext, cellCount);
+  memset(lifeNext, 0, cellCount);
+  ++lifeGeneration;
+
+  if (aliveCount == 0 || (lifeGeneration % LIFE_RESEED_GENERATIONS) == 0) {
+    seedLifeBoard();
+  }
+}
+
+void enterWeatherMode() {
+  currentScreenMode = ScreenMode::Weather;
+  lv_obj_clear_flag(ui.dashboardRoot, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(clockUi.clockRoot, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_invalidate(lv_scr_act());
+  lv_timer_handler();
+}
+
+void enterClockMode() {
+  currentScreenMode = ScreenMode::Clock;
+  lv_obj_add_flag(ui.dashboardRoot, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(clockUi.clockRoot, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_invalidate(lv_scr_act());
+  lv_timer_handler();
+}
+
+void enterLifeMode() {
+  currentScreenMode = ScreenMode::Life;
+  lv_obj_add_flag(ui.dashboardRoot, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(clockUi.clockRoot, LV_OBJ_FLAG_HIDDEN);
+  seedLifeBoard();
+  renderLifeBoard();
+  lastLifeStep = millis();
+}
+
+void toggleScreenMode() {
+  if (currentScreenMode == ScreenMode::Weather) {
+    enterClockMode();
+  } else if (currentScreenMode == ScreenMode::Clock) {
+    enterLifeMode();
+  } else {
+    enterWeatherMode();
+  }
+}
+
+void updateClockScreenUi() {
+  lv_label_set_text(clockUi.time, formatLocalTime(currentLocalEpochUtc, weatherData.timezoneOffset).c_str());
+  lv_label_set_text(clockUi.date, formatLocalDate(currentLocalEpochUtc, weatherData.timezoneOffset).c_str());
+
+  if (weatherData.valid) {
+    lv_label_set_text(clockUi.location, weatherData.location.c_str());
+    String footer = weatherData.condition + "  |  " + String(weatherData.temperature) + weatherData.unitsLabel;
+    lv_label_set_text(clockUi.footer, footer.c_str());
+  } else {
+    lv_label_set_text(clockUi.location, "Clock");
+    lv_label_set_text(clockUi.footer, "Waiting for weather data");
+  }
+}
+
+void handleSerialCommands() {
+  if (!Serial.available()) {
+    return;
+  }
+
+  String command = Serial.readStringUntil('\n');
+  command.trim();
+  command.toLowerCase();
+
+  if (command == "weather" || command == "w") {
+    enterWeatherMode();
+    Serial.println("Screen mode: weather");
+    return;
+  }
+
+  if (command == "life" || command == "l") {
+    enterLifeMode();
+    Serial.println("Screen mode: life");
+    return;
+  }
+
+  if (command == "clock" || command == "c") {
+    enterClockMode();
+    Serial.println("Screen mode: clock");
+    return;
+  }
+
+  if (command == "toggle" || command == "t") {
+    toggleScreenMode();
+    Serial.printf("Screen mode: %s\n",
+                  currentScreenMode == ScreenMode::Weather ? "weather"
+                  : currentScreenMode == ScreenMode::Clock   ? "clock"
+                                                             : "life");
+    return;
+  }
+
+  if (command == "help" || command == "?") {
+    Serial.println("Commands: weather|w, clock|c, life|l, toggle|t, help|?");
+    return;
+  }
+
+  if (!command.isEmpty()) {
+    Serial.printf("Unknown command: %s\n", command.c_str());
+  }
+}
+
+void updateWeatherIcon() {
+  const char *iconCode = weatherData.iconCode.isEmpty() ? "03d" : weatherData.iconCode.c_str();
+  renderIconToBuffer(iconCode, weatherIconCanvasBuffer, kOpenWeatherIconWidth, kOpenWeatherIconHeight);
   lv_obj_invalidate(ui.iconCanvas);
 }
 
@@ -217,13 +516,83 @@ void createMetricCard(lv_obj_t *parent, lv_obj_t **titleOut, lv_obj_t **valueOut
   *valueOut = value;
 }
 
+void showStartupIconGallery() {
+  lv_obj_t *screen = lv_scr_act();
+  lv_obj_clean(screen);
+  lv_obj_set_style_bg_color(screen, lv_color_hex(0x061320), 0);
+  lv_obj_set_style_bg_grad_color(screen, lv_color_hex(0x061320), 0);
+
+  lv_obj_t *title = lv_label_create(screen);
+  lv_obj_set_style_text_color(title, lv_color_hex(0xF4F8FC), 0);
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
+  lv_label_set_text(title, "OpenWeather Icon Set");
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 18);
+
+  lv_obj_t *subtitle = lv_label_create(screen);
+  lv_obj_set_style_text_color(subtitle, lv_color_hex(0x89A9C6), 0);
+  lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_18, 0);
+  lv_label_set_text(subtitle, "Boot preview before dashboard");
+  lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 54);
+
+  lv_obj_t *grid = createStyledBlock(screen, lv_color_hex(0x0B1B2B), LV_OPA_80, 24);
+  lv_obj_set_size(grid, 748, 356);
+  lv_obj_align(grid, LV_ALIGN_BOTTOM_MID, 0, -18);
+  lv_obj_set_style_pad_all(grid, 16, 0);
+  lv_obj_set_style_pad_row(grid, 10, 0);
+  lv_obj_set_style_pad_column(grid, 12, 0);
+  lv_obj_set_style_border_width(grid, 1, 0);
+  lv_obj_set_style_border_color(grid, lv_color_hex(0x1C4269), 0);
+  lv_obj_set_layout(grid, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+  for (size_t i = 0; i < kStartupGalleryCount; ++i) {
+    lv_obj_t *cell = createStyledBlock(grid, lv_color_hex(0x102538), LV_OPA_90, 18);
+    lv_obj_set_size(cell, 108, 100);
+    lv_obj_set_style_pad_all(cell, 10, 0);
+    lv_obj_set_style_border_width(cell, 1, 0);
+    lv_obj_set_style_border_color(cell, lv_color_hex(0x244A70), 0);
+    lv_obj_set_layout(cell, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(cell, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(cell, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(cell, 6, 0);
+
+    renderIconToBuffer(kStartupGalleryCodes[i], startupGalleryBuffers[i], STARTUP_GALLERY_ICON_SIZE, STARTUP_GALLERY_ICON_SIZE);
+
+    lv_obj_t *canvas = lv_canvas_create(cell);
+    lv_obj_remove_style_all(canvas);
+    lv_obj_set_size(canvas, STARTUP_GALLERY_ICON_SIZE, STARTUP_GALLERY_ICON_SIZE);
+    lv_canvas_set_buffer(canvas, startupGalleryBuffers[i], STARTUP_GALLERY_ICON_SIZE, STARTUP_GALLERY_ICON_SIZE,
+                         LV_IMG_CF_TRUE_COLOR);
+
+    lv_obj_t *code = lv_label_create(cell);
+    lv_obj_set_style_text_color(code, lv_color_hex(0xDCEAF6), 0);
+    lv_obj_set_style_text_font(code, &lv_font_montserrat_18, 0);
+    lv_label_set_text(code, kStartupGalleryCodes[i]);
+  }
+
+  lv_timer_handler();
+  const unsigned long start = millis();
+  while ((millis() - start) < STARTUP_GALLERY_MS) {
+    lv_timer_handler();
+    delay(10);
+  }
+
+  lv_obj_clean(screen);
+}
+
 void createDashboardUi() {
   lv_obj_t *screen = lv_scr_act();
   lv_obj_set_style_bg_color(screen, lv_color_hex(0x061320), 0);
   lv_obj_set_style_bg_grad_color(screen, lv_color_hex(0x061320), 0);
   lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_VER, 0);
 
-  lv_obj_t *header = createStyledBlock(screen, lv_color_hex(0x0B1B2B), LV_OPA_80, 28);
+  ui.dashboardRoot = createStyledBlock(screen, lv_color_hex(0x000000), LV_OPA_TRANSP, 0);
+  lv_obj_set_size(ui.dashboardRoot, SCREEN_WIDTH, SCREEN_HEIGHT);
+  lv_obj_set_pos(ui.dashboardRoot, 0, 0);
+  lv_obj_clear_flag(ui.dashboardRoot, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *header = createStyledBlock(ui.dashboardRoot, lv_color_hex(0x0B1B2B), LV_OPA_80, 28);
   lv_obj_set_size(header, 760, 96);
   lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 18);
   lv_obj_set_style_pad_all(header, 20, 0);
@@ -251,7 +620,7 @@ void createDashboardUi() {
   lv_label_set_text(ui.clock, "--:--");
   lv_obj_align(ui.clock, LV_ALIGN_RIGHT_MID, 0, 0);
 
-  ui.hero = createStyledBlock(screen, lv_color_hex(0x0A1A2A), LV_OPA_90, 30);
+  ui.hero = createStyledBlock(ui.dashboardRoot, lv_color_hex(0x0A1A2A), LV_OPA_90, 30);
   lv_obj_set_size(ui.hero, 332, 330);
   lv_obj_align(ui.hero, LV_ALIGN_TOP_LEFT, 20, 128);
   lv_obj_set_style_pad_all(ui.hero, 22, 0);
@@ -314,7 +683,7 @@ void createDashboardUi() {
   lv_obj_set_width(ui.description, 286);
   lv_label_set_text(ui.description, "Waiting for weather response");
 
-  lv_obj_t *grid = createStyledBlock(screen, lv_color_hex(0x000000), LV_OPA_TRANSP, 0);
+  lv_obj_t *grid = createStyledBlock(ui.dashboardRoot, lv_color_hex(0x000000), LV_OPA_TRANSP, 0);
   lv_obj_set_size(grid, 408, 328);
   lv_obj_align(grid, LV_ALIGN_TOP_RIGHT, -20, 128);
   lv_obj_set_layout(grid, LV_LAYOUT_FLEX);
@@ -352,6 +721,50 @@ void createDashboardUi() {
   updateWeatherIcon();
 }
 
+void createClockUi() {
+  lv_obj_t *screen = lv_scr_act();
+
+  clockUi.clockRoot = createStyledBlock(screen, lv_color_hex(0x07131D), LV_OPA_COVER, 0);
+  lv_obj_set_size(clockUi.clockRoot, SCREEN_WIDTH, SCREEN_HEIGHT);
+  lv_obj_set_pos(clockUi.clockRoot, 0, 0);
+  lv_obj_clear_flag(clockUi.clockRoot, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(clockUi.clockRoot, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t *panel = createStyledBlock(clockUi.clockRoot, lv_color_hex(0x0B1D2D), LV_OPA_90, 36);
+  lv_obj_set_size(panel, 728, 392);
+  lv_obj_align(panel, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_border_width(panel, 1, 0);
+  lv_obj_set_style_border_color(panel, lv_color_hex(0x1E466B), 0);
+  lv_obj_set_style_shadow_width(panel, 22, 0);
+  lv_obj_set_style_shadow_color(panel, lv_color_hex(0x041019), 0);
+  lv_obj_set_style_shadow_opa(panel, LV_OPA_40, 0);
+  lv_obj_set_layout(panel, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(panel, 28, 0);
+  lv_obj_set_style_pad_row(panel, 14, 0);
+
+  clockUi.location = lv_label_create(panel);
+  lv_obj_set_style_text_color(clockUi.location, lv_color_hex(0x8CC5F0), 0);
+  lv_obj_set_style_text_font(clockUi.location, &lv_font_montserrat_22, 0);
+  lv_label_set_text(clockUi.location, "Clock");
+
+  clockUi.time = lv_label_create(panel);
+  lv_obj_set_style_text_color(clockUi.time, lv_color_hex(0xF7FBFF), 0);
+  lv_obj_set_style_text_font(clockUi.time, &lv_font_montserrat_48, 0);
+  lv_label_set_text(clockUi.time, "--:--");
+
+  clockUi.date = lv_label_create(panel);
+  lv_obj_set_style_text_color(clockUi.date, lv_color_hex(0xD3E4F5), 0);
+  lv_obj_set_style_text_font(clockUi.date, &lv_font_montserrat_28, 0);
+  lv_label_set_text(clockUi.date, "Waiting for time");
+
+  clockUi.footer = lv_label_create(panel);
+  lv_obj_set_style_text_color(clockUi.footer, lv_color_hex(0x89A9C6), 0);
+  lv_obj_set_style_text_font(clockUi.footer, &lv_font_montserrat_18, 0);
+  lv_label_set_text(clockUi.footer, "Waiting for weather data");
+}
+
 void updateDashboardUi() {
   if (!weatherData.valid) {
     lv_label_set_text(ui.status, weatherData.lastError.c_str());
@@ -387,6 +800,7 @@ void updateDashboardUi() {
 
   lv_label_set_text(ui.sunrise, formatLocalTime(weatherData.sunrise, weatherData.timezoneOffset).c_str());
   lv_label_set_text(ui.sunset, formatLocalTime(weatherData.sunset, weatherData.timezoneOffset).c_str());
+  updateClockScreenUi();
 }
 
 void setStatusOnly(const String &message) {
@@ -542,14 +956,6 @@ void initLvgl() {
   dispDrv.flush_cb = displayFlush;
   dispDrv.draw_buf = &drawBuffer;
   lv_disp_drv_register(&dispDrv);
-
-  static lv_indev_drv_t indevDrv;
-  lv_indev_drv_init(&indevDrv);
-  indevDrv.type = LV_INDEV_TYPE_POINTER;
-  indevDrv.read_cb = touchRead;
-  lv_indev_drv_register(&indevDrv);
-
-  createDashboardUi();
 }
 
 void initDisplayHardware() {
@@ -577,11 +983,7 @@ void initDisplayHardware() {
   Serial.println("Direct display test drawn");
 }
 
-void refreshClock() {
-  if (!weatherData.valid) {
-    return;
-  }
-
+void tickClock() {
   const unsigned long now = millis();
   const long elapsedSeconds = static_cast<long>((now - lastClockTick) / 1000UL);
   if (elapsedSeconds <= 0) {
@@ -590,8 +992,12 @@ void refreshClock() {
 
   currentLocalEpochUtc += elapsedSeconds;
   lastClockTick += static_cast<unsigned long>(elapsedSeconds) * 1000UL;
-  lv_label_set_text(ui.clock, formatLocalTime(currentLocalEpochUtc, weatherData.timezoneOffset).c_str());
-  lv_label_set_text(ui.status, formatObservedLine().c_str());
+
+  if (weatherData.valid) {
+    lv_label_set_text(ui.clock, formatLocalTime(currentLocalEpochUtc, weatherData.timezoneOffset).c_str());
+    lv_label_set_text(ui.status, formatObservedLine().c_str());
+  }
+  updateClockScreenUi();
 }
 
 }  // namespace
@@ -602,10 +1008,16 @@ void setup() {
   Serial.println();
   Serial.println("Booting IoT-SmartHub");
   Serial.printf("Display model: %s\n", DISPLAY_MODEL == CrowPanelModel::FiveInch ? "5-inch" : "7-inch");
+  randomSeed(micros());
 
   initDisplayHardware();
   initLvgl();
+  initLifeBuffers();
+  showStartupIconGallery();
+  createDashboardUi();
+  createClockUi();
   Serial.println("LVGL initialized");
+  Serial.println("Serial commands: weather|w, clock|c, life|l, toggle|t, help|?");
 
   lastClockTick = millis();
   lastWeatherAttempt = millis() - WEATHER_REFRESH_MS;
@@ -616,6 +1028,8 @@ void setup() {
 
 void loop() {
   const unsigned long now = millis();
+  handleSerialCommands();
+  tickClock();
 
   if ((WiFi.status() != WL_CONNECTED && (now - lastWeatherAttempt) >= WIFI_RETRY_MS) ||
       (now - lastWeatherAttempt) >= WEATHER_REFRESH_MS) {
@@ -624,7 +1038,13 @@ void loop() {
     lastClockTick = millis();
   }
 
-  refreshClock();
-  lv_timer_handler();
+  if (currentScreenMode == ScreenMode::Weather || currentScreenMode == ScreenMode::Clock) {
+    lv_timer_handler();
+  } else if ((now - lastLifeStep) >= LIFE_STEP_MS) {
+    stepLifeBoard();
+    renderLifeBoard();
+    lastLifeStep = now;
+  }
+
   delay(5);
 }
