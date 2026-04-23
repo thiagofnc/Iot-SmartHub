@@ -27,6 +27,16 @@ build_flags =
   -I./include
 ```
 
+6. Create your local app settings file before building.
+   - Copy `Screen Code/Screen-pIO/include/AppConfig.example.h` to `Screen Code/Screen-pIO/include/AppConfig.h`
+   - Fill in your own Wi-Fi name, password, OpenWeather API key, location, and units
+   - `AppConfig.h` is gitignored, so your private values stay off GitHub
+
+## Repo Notes
+
+- `Screen Code/Screen-pIO/include/AppConfig.h` is intentionally local-only.
+- Anyone cloning the repo still needs the custom board definition file installed in their local PlatformIO boards folder.
+
 ## Reference
 
 For the full Elecrow walkthrough and firmware-side details, use the official guide:

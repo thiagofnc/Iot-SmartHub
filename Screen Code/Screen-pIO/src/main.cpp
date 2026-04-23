@@ -9,15 +9,10 @@
 #include <lvgl.h>
 #include <time.h>
 
+#include "AppConfig.h"
 #include "CrowPanelDisplay.h"
 
 namespace {
-
-constexpr char WIFI_SSID[] = "Thiago's S25 Ultra";
-constexpr char WIFI_PASSWORD[] = "12345678";
-constexpr char OPENWEATHER_API_KEY[] = "bc22320cb2bae9805f93a5c9e3150e73";
-constexpr char OPENWEATHER_LOCATION[] = "Terre Haute,US";
-constexpr char OPENWEATHER_UNITS[] = "imperial";
 
 constexpr uint16_t SCREEN_WIDTH = 800;
 constexpr uint16_t SCREEN_HEIGHT = 480;
