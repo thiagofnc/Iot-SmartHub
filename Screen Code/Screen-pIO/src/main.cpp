@@ -26,6 +26,8 @@ constexpr uint32_t WEATHER_REFRESH_MS = 10UL * 60UL * 1000UL;
 constexpr uint32_t WIFI_RETRY_MS = 15000UL;
 constexpr uint32_t HTTP_TIMEOUT_MS = 15000UL;
 constexpr uint32_t STARTUP_COLOR_TEST_MS = 250UL;
+constexpr uint32_t NTP_SYNC_WAIT_MS = 5000UL;
+constexpr long MIN_VALID_EPOCH_UTC = 1609459200L;  // 2021-01-01
 constexpr int BACKLIGHT_PIN = 2;
 constexpr int BACKLIGHT_CHANNEL = 1;
 constexpr int BACKLIGHT_FREQUENCY_HZ = 300;
@@ -165,6 +167,7 @@ uint8_t currentBacklightBrightness = BACKLIGHT_BRIGHTNESS;
 String serialCommandBuffer;
 bool colonVisible = true;
 unsigned long lastColonBlink = 0;
+bool ntpConfigured = false;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -195,6 +198,31 @@ String formatLocalTime12(long epochUtc, long tzOffset, bool showAmPm, String *am
   }
   if (ampmOut) *ampmOut = ampm;
   return String(buf);
+}
+
+long readSystemEpochUtc() {
+  const time_t now = time(nullptr);
+  if (now < static_cast<time_t>(MIN_VALID_EPOCH_UTC)) return 0;
+  return static_cast<long>(now);
+}
+
+long clockEpochUtc() {
+  const long systemEpoch = readSystemEpochUtc();
+  return systemEpoch > 0 ? systemEpoch : currentLocalEpochUtc;
+}
+
+void configureTimeSyncIfNeeded() {
+  if (ntpConfigured) return;
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
+  ntpConfigured = true;
+}
+
+void waitForTimeSync() {
+  const unsigned long start = millis();
+  while (readSystemEpochUtc() <= 0 && (millis() - start) < NTP_SYNC_WAIT_MS) {
+    delay(100);
+    lv_timer_handler();
+  }
 }
 
 String urlEncode(const String &value) {
@@ -827,14 +855,15 @@ void swipeScreen(int delta) {
 // UI updates
 // ---------------------------------------------------------------------------
 void updateClockFace() {
-  const time_t t = static_cast<time_t>(currentLocalEpochUtc + weatherData.timezoneOffset);
+  const long utcEpoch = clockEpochUtc();
+  const time_t t = static_cast<time_t>(utcEpoch + weatherData.timezoneOffset);
   struct tm tm; gmtime_r(&t, &tm);
 
   int h = tm.tm_hour;
   String ampm = (h >= 12) ? "PM" : "AM";
   int h12 = h % 12; if (h12 == 0) h12 = 12;
 
-  if (currentLocalEpochUtc > 0) {
+  if (utcEpoch > 0) {
     lv_label_set_text(clockUi.hh, pad2(h12).c_str());
     lv_label_set_text(clockUi.mm, pad2(tm.tm_min).c_str());
     lv_label_set_text(clockUi.ampm, ampm.c_str());
@@ -1046,7 +1075,12 @@ void connectWifiIfNeeded() {
     delay(250);
     lv_timer_handler();
   }
-  if (WiFi.status() != WL_CONNECTED) weatherData.lastError = "WI-FI UNAVAILABLE";
+  if (WiFi.status() == WL_CONNECTED) {
+    configureTimeSyncIfNeeded();
+    waitForTimeSync();
+  } else {
+    weatherData.lastError = "WI-FI UNAVAILABLE";
+  }
 }
 
 bool parseWeatherPayload(const String &payload) {
@@ -1077,7 +1111,8 @@ bool parseWeatherPayload(const String &payload) {
   weatherData.unitsLabel = (strcmp(OPENWEATHER_UNITS, "metric") == 0) ? " C" : " F";
   weatherData.lastError = "";
   weatherData.valid = true;
-  currentLocalEpochUtc = weatherData.observedAt;
+  const long systemEpoch = readSystemEpochUtc();
+  currentLocalEpochUtc = systemEpoch > 0 ? systemEpoch : weatherData.observedAt;
   return true;
 }
 
