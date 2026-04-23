@@ -121,6 +121,7 @@ uint8_t *lifeCurrent = nullptr;
 uint8_t *lifeNext = nullptr;
 uint16_t *lifeFrameBuffer = nullptr;
 uint8_t currentBacklightBrightness = BACKLIGHT_BRIGHTNESS;
+String serialCommandBuffer;
 
 String formatLocalTime(long epochUtc, long timezoneOffsetSeconds) {
   if (epochUtc <= 0) {
@@ -447,65 +448,86 @@ void handleSerialCommands() {
     return;
   }
 
-  String command = Serial.readStringUntil('\n');
-  command.trim();
-  command.toLowerCase();
-
-  if (command == "weather" || command == "w") {
-    enterWeatherMode();
-    Serial.println("Screen mode: weather");
-    return;
-  }
-
-  if (command == "life" || command == "l") {
-    enterLifeMode();
-    Serial.println("Screen mode: life");
-    return;
-  }
-
-  if (command.length() >= 2 && command[0] == 'd') {
-    const String valueText = command.substring(1);
-    bool valid = !valueText.isEmpty();
-    for (size_t i = 0; i < valueText.length() && valid; ++i) {
-      valid = isdigit(static_cast<unsigned char>(valueText[i])) != 0;
+  while (Serial.available()) {
+    const char ch = static_cast<char>(Serial.read());
+    if (ch == '\r') {
+      continue;
     }
 
-    if (valid) {
-      const int brightness = valueText.toInt();
-      if (brightness >= 0 && brightness <= 255) {
-        setBacklight(static_cast<uint8_t>(brightness));
-        Serial.printf("Backlight: %u\n", currentBacklightBrightness);
-      } else {
-        Serial.println("Brightness must be between 0 and 255");
+    if (ch == '\n') {
+      String command = serialCommandBuffer;
+      serialCommandBuffer = "";
+      command.trim();
+      command.toLowerCase();
+
+      if (command.isEmpty()) {
+        return;
       }
-    } else {
-      Serial.println("Use d<number>, for example d80 or d255");
+
+      if (command == "weather" || command == "w") {
+        enterWeatherMode();
+        Serial.println("Screen mode: weather");
+        return;
+      }
+
+      if (command == "life" || command == "l") {
+        enterLifeMode();
+        Serial.println("Screen mode: life");
+        return;
+      }
+
+      if (command.length() >= 2 && command[0] == 'd') {
+        const String valueText = command.substring(1);
+        bool valid = !valueText.isEmpty();
+        for (size_t i = 0; i < valueText.length() && valid; ++i) {
+          valid = isdigit(static_cast<unsigned char>(valueText[i])) != 0;
+        }
+
+        if (valid) {
+          const int brightness = valueText.toInt();
+          if (brightness >= 0 && brightness <= 255) {
+            setBacklight(static_cast<uint8_t>(brightness));
+            Serial.printf("Backlight: %u\n", currentBacklightBrightness);
+          } else {
+            Serial.println("Brightness must be between 0 and 255");
+          }
+        } else {
+          Serial.println("Use d<number>, for example d80 or d255");
+        }
+        return;
+      }
+
+      if (command == "clock" || command == "c") {
+        enterClockMode();
+        Serial.println("Screen mode: clock");
+        return;
+      }
+
+      if (command == "toggle" || command == "t") {
+        toggleScreenMode();
+        Serial.printf("Screen mode: %s\n",
+                      currentScreenMode == ScreenMode::Weather ? "weather"
+                      : currentScreenMode == ScreenMode::Clock   ? "clock"
+                                                                 : "life");
+        return;
+      }
+
+      if (command == "help" || command == "?") {
+        Serial.println("Commands: weather|w, clock|c, life|l, d<number>, toggle|t, help|?");
+        return;
+      }
+
+      Serial.printf("Unknown command: %s\n", command.c_str());
+      return;
     }
-    return;
-  }
 
-  if (command == "clock" || command == "c") {
-    enterClockMode();
-    Serial.println("Screen mode: clock");
-    return;
-  }
-
-  if (command == "toggle" || command == "t") {
-    toggleScreenMode();
-    Serial.printf("Screen mode: %s\n",
-                  currentScreenMode == ScreenMode::Weather ? "weather"
-                  : currentScreenMode == ScreenMode::Clock   ? "clock"
-                                                             : "life");
-    return;
-  }
-
-  if (command == "help" || command == "?") {
-    Serial.println("Commands: weather|w, clock|c, life|l, d<number>, toggle|t, help|?");
-    return;
-  }
-
-  if (!command.isEmpty()) {
-    Serial.printf("Unknown command: %s\n", command.c_str());
+    if (serialCommandBuffer.length() < 64) {
+      serialCommandBuffer += ch;
+    } else {
+      serialCommandBuffer = "";
+      Serial.println("Command too long");
+      return;
+    }
   }
 }
 
