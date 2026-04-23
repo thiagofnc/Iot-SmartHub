@@ -12,6 +12,7 @@ void Receiver_Main::init() {
     motor.init();
     webServer.init();
     camReceiver.init();
+    lightSensor.init();
 }
 
 void Receiver_Main::loop() {
@@ -19,6 +20,7 @@ void Receiver_Main::loop() {
     lora.receivePacket();
     camReceiver.processGesture();
     webServer.getRequest();
+    lightSensor.readLight();
     
     // Example motor command logic could go here based on data
 }

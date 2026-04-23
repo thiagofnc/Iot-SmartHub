@@ -59,12 +59,19 @@ classDiagram
             +init()
             +processGesture()
         }
+
+        class Local_Light_Sensor {
+            -lightLevel: int
+            +init()
+            +readLight()
+        }
     }
 
      Receiver_Main --> Lora_Receiver : Polls data
      Receiver_Main --> Motor: Commands
      Receiver_Main --> WebServer : Hosts
      Receiver_Main --> BLE_Cam_Receiver : Polls gestures
+     Receiver_Main --> Local_Light_Sensor : Reads light level
 
 
 

@@ -6,6 +6,7 @@
 #include "Motor.h"
 #include "WebServerManager.h"
 #include "BLE_Cam_Receiver.h"
+#include "Local_Light_Sensor.h"
 
 class Receiver_Main {
 private:
@@ -13,6 +14,7 @@ private:
     Motor motor;
     WebServerManager webServer;
     BLE_Cam_Receiver camReceiver;
+    Local_Light_Sensor lightSensor;
 
 public:
     Receiver_Main();
