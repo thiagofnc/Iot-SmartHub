@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <esp_heap_caps.h>
 #include <lvgl.h>
+#include <math.h>
 #include <string.h>
 #include <time.h>
 
@@ -119,6 +120,7 @@ uint32_t lifeGeneration = 0;
 uint8_t *lifeCurrent = nullptr;
 uint8_t *lifeNext = nullptr;
 uint16_t *lifeFrameBuffer = nullptr;
+uint8_t currentBacklightBrightness = BACKLIGHT_BRIGHTNESS;
 
 String formatLocalTime(long epochUtc, long timezoneOffsetSeconds) {
   if (epochUtc <= 0) {
@@ -208,6 +210,7 @@ void setBacklight(uint8_t brightness) {
   ledcSetup(BACKLIGHT_CHANNEL, BACKLIGHT_FREQUENCY_HZ, BACKLIGHT_RESOLUTION_BITS);
   ledcAttachPin(BACKLIGHT_PIN, BACKLIGHT_CHANNEL);
   ledcWrite(BACKLIGHT_CHANNEL, brightness);
+  currentBacklightBrightness = brightness;
 }
 
 void renderIconToBuffer(const char *iconCode, lv_color_t *buffer, uint16_t width, uint16_t height) {
@@ -460,6 +463,27 @@ void handleSerialCommands() {
     return;
   }
 
+  if (command.length() >= 2 && command[0] == 'd') {
+    const String valueText = command.substring(1);
+    bool valid = !valueText.isEmpty();
+    for (size_t i = 0; i < valueText.length() && valid; ++i) {
+      valid = isdigit(static_cast<unsigned char>(valueText[i])) != 0;
+    }
+
+    if (valid) {
+      const int brightness = valueText.toInt();
+      if (brightness >= 0 && brightness <= 255) {
+        setBacklight(static_cast<uint8_t>(brightness));
+        Serial.printf("Backlight: %u\n", currentBacklightBrightness);
+      } else {
+        Serial.println("Brightness must be between 0 and 255");
+      }
+    } else {
+      Serial.println("Use d<number>, for example d80 or d255");
+    }
+    return;
+  }
+
   if (command == "clock" || command == "c") {
     enterClockMode();
     Serial.println("Screen mode: clock");
@@ -476,7 +500,7 @@ void handleSerialCommands() {
   }
 
   if (command == "help" || command == "?") {
-    Serial.println("Commands: weather|w, clock|c, life|l, toggle|t, help|?");
+    Serial.println("Commands: weather|w, clock|c, life|l, d<number>, toggle|t, help|?");
     return;
   }
 
@@ -1017,7 +1041,7 @@ void setup() {
   createDashboardUi();
   createClockUi();
   Serial.println("LVGL initialized");
-  Serial.println("Serial commands: weather|w, clock|c, life|l, toggle|t, help|?");
+  Serial.println("Serial commands: weather|w, clock|c, life|l, d<number>, toggle|t, help|?");
 
   lastClockTick = millis();
   lastWeatherAttempt = millis() - WEATHER_REFRESH_MS;
