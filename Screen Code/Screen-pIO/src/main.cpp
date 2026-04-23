@@ -435,21 +435,17 @@ void buildClockScreen(lv_obj_t *parent) {
   // feel. 256 = 1x, 560 ~= 2.19x. Labels must be sized to contain the scaled
   // glyphs, because transform_zoom only affects rendering — the label's own
   // bounding box stays at its unscaled size and clips the draw otherwise.
-  constexpr int32_t kZoom = 560;
   constexpr int kHeroY = 130;
-  const int kHeroLeft = 60;
-  const int kDigitPairW = 128;  // "10" or "42" at 2.19x ~= 128 px wide
-  const int kDigitH = 96;       // scaled glyph height
-  const int kColonW = 28;
-  const int kGap = 6;           // tight hug between digits and colon
+  const int kHeroLeft = 122;
+  const int kDigitPairW = 110;
+  const int kDigitH = 66;
+  const int kColonW = 24;
+  const int kGap = 8;
 
   auto styleHero = [](lv_obj_t *l, int w, int h) {
     lv_obj_set_size(l, w, h);
-    lv_obj_set_style_transform_zoom(l, kZoom, 0);
-    lv_obj_set_style_transform_pivot_x(l, 0, 0);
-    lv_obj_set_style_transform_pivot_y(l, 0, 0);
-    lv_obj_add_flag(l, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_CLIP);
   };
 
   clockUi.hh = makeLabel(clockUi.root, "10", &lv_font_montserrat_48, COL_INK);
@@ -466,8 +462,8 @@ void buildClockScreen(lv_obj_t *parent) {
 
   clockUi.ampm = makeLabel(clockUi.root, "AM", &lv_font_montserrat_18, COL_INK_3);
   lv_obj_set_pos(clockUi.ampm,
-                 kHeroLeft + kDigitPairW + kColonW + kDigitPairW + kGap * 2 + 14,
-                 kHeroY + 60);
+                 kHeroLeft + kDigitPairW + kColonW + kDigitPairW + kGap * 2 + 12,
+                 kHeroY + 36);
 
   // Right-side "glance" weather
   lv_obj_t *glance = makePlain(clockUi.root);
