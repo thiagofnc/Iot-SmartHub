@@ -22,6 +22,8 @@ namespace {
 // ---------------------------------------------------------------------------
 constexpr uint16_t SCREEN_WIDTH = 800;
 constexpr uint16_t SCREEN_HEIGHT = 480;
+constexpr uint16_t PORTRAIT_WIDTH = SCREEN_HEIGHT;
+constexpr uint16_t PORTRAIT_HEIGHT = SCREEN_WIDTH;
 constexpr uint32_t WEATHER_REFRESH_MS = 10UL * 60UL * 1000UL;
 constexpr uint32_t WIFI_RETRY_MS = 15000UL;
 constexpr uint32_t HTTP_TIMEOUT_MS = 15000UL;
@@ -64,7 +66,8 @@ constexpr uint32_t COL_RAIL_BG    = 0x242B42;  // track/rail background
 enum class ScreenIndex : int {
   Clock = 0,
   Weather = 1,
-  Count = 2,
+  Portrait = 2,
+  Count = 3,
 };
 
 CrowPanelDisplay display(DISPLAY_MODEL);
@@ -135,6 +138,24 @@ struct ClockUi {
   lv_obj_t *nowPlayingArtist = nullptr;
 } clockUi;
 lv_color_t glanceIconBuf[48 * 48];
+
+struct PortraitClockUi {
+  lv_obj_t *root = nullptr;
+  StatusRow status;
+  lv_obj_t *dayName = nullptr;
+  lv_obj_t *dateLong = nullptr;
+  lv_obj_t *hh = nullptr;
+  lv_obj_t *colon = nullptr;
+  lv_obj_t *mm = nullptr;
+  lv_obj_t *ampm = nullptr;
+  lv_obj_t *weatherIconCanvas = nullptr;
+  lv_obj_t *weatherTemp = nullptr;
+  lv_obj_t *weatherCond = nullptr;
+  lv_obj_t *weatherLoc = nullptr;
+  lv_obj_t *nowPlayingTitle = nullptr;
+  lv_obj_t *nowPlayingArtist = nullptr;
+} portraitUi;
+lv_color_t portraitIconBuf[56 * 56];
 
 struct WeatherUi {
   lv_obj_t *root = nullptr;
@@ -364,8 +385,9 @@ lv_obj_t *makeDot(lv_obj_t *parent, int size, uint32_t color) {
 // Common status row (top strip of each screen)
 // ---------------------------------------------------------------------------
 void buildStatusRow(lv_obj_t *parent, StatusRow &out, const char *leftText, const char *rightText) {
+  const lv_coord_t parentW = lv_obj_get_width(parent);
   lv_obj_t *row = makePlain(parent);
-  lv_obj_set_size(row, SCREEN_WIDTH - 56, 18);
+  lv_obj_set_size(row, parentW - 56, 18);
   lv_obj_set_pos(row, 28, 18);
 
   // left cluster: dot + label
@@ -380,7 +402,7 @@ void buildStatusRow(lv_obj_t *parent, StatusRow &out, const char *leftText, cons
   lv_obj_align(out.rightInfo, LV_ALIGN_RIGHT_MID, -26, 0);
 
   // 4-bar wifi-ish indicator
-  const int barXBase = SCREEN_WIDTH - 56 - 22;
+  const int barXBase = lv_obj_get_width(row) - 22;
   const int heights[4] = {3, 6, 9, 12};
   for (int i = 0; i < 4; ++i) {
     lv_obj_t *b = makePlain(row);
@@ -397,10 +419,11 @@ void buildStatusRow(lv_obj_t *parent, StatusRow &out, const char *leftText, cons
 // ---------------------------------------------------------------------------
 lv_obj_t *pageDotClock = nullptr;
 lv_obj_t *pageDotWeather = nullptr;
+lv_obj_t *pageDotPortrait = nullptr;
 
 lv_obj_t *buildPageDots(lv_obj_t *parent) {
   lv_obj_t *pill = makePlain(parent);
-  lv_obj_set_size(pill, 70, 20);
+  lv_obj_set_size(pill, 96, 20);
   lv_obj_set_style_bg_color(pill, hex(0x000000), 0);
   lv_obj_set_style_bg_opa(pill, LV_OPA_40, 0);
   lv_obj_set_style_radius(pill, 10, 0);
@@ -421,24 +444,31 @@ lv_obj_t *buildPageDots(lv_obj_t *parent) {
   lv_obj_set_style_radius(pageDotWeather, 3, 0);
   lv_obj_set_style_bg_color(pageDotWeather, hex(0xFFFFFF), 0);
   lv_obj_set_style_bg_opa(pageDotWeather, LV_OPA_30, 0);
-  lv_obj_align(pageDotWeather, LV_ALIGN_RIGHT_MID, -14, 0);
+  lv_obj_align(pageDotWeather, LV_ALIGN_CENTER, 0, 0);
+
+  pageDotPortrait = makePlain(pill);
+  lv_obj_set_size(pageDotPortrait, 6, 6);
+  lv_obj_set_style_radius(pageDotPortrait, 3, 0);
+  lv_obj_set_style_bg_color(pageDotPortrait, hex(0xFFFFFF), 0);
+  lv_obj_set_style_bg_opa(pageDotPortrait, LV_OPA_30, 0);
+  lv_obj_align(pageDotPortrait, LV_ALIGN_RIGHT_MID, -14, 0);
 
   return pill;
 }
 
 void refreshPageDots() {
-  if (!pageDotClock || !pageDotWeather) return;
-  bool clockActive = currentScreen == ScreenIndex::Clock;
+  if (!pageDotClock || !pageDotWeather || !pageDotPortrait) return;
 
-  lv_obj_set_size(pageDotClock, clockActive ? 22 : 6, 6);
-  lv_obj_set_style_bg_color(pageDotClock, clockActive ? hex(COL_ACCENT) : hex(0xFFFFFF), 0);
-  lv_obj_set_style_bg_opa(pageDotClock, clockActive ? LV_OPA_COVER : LV_OPA_30, 0);
-  lv_obj_align(pageDotClock, LV_ALIGN_LEFT_MID, 14, 0);
+  auto styleDot = [](lv_obj_t *dot, bool active, lv_align_t align, lv_coord_t x_ofs) {
+    lv_obj_set_size(dot, active ? 22 : 6, 6);
+    lv_obj_set_style_bg_color(dot, active ? hex(COL_ACCENT) : hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(dot, active ? LV_OPA_COVER : LV_OPA_30, 0);
+    lv_obj_align(dot, align, x_ofs, 0);
+  };
 
-  lv_obj_set_size(pageDotWeather, clockActive ? 6 : 22, 6);
-  lv_obj_set_style_bg_color(pageDotWeather, clockActive ? hex(0xFFFFFF) : hex(COL_ACCENT), 0);
-  lv_obj_set_style_bg_opa(pageDotWeather, clockActive ? LV_OPA_30 : LV_OPA_COVER, 0);
-  lv_obj_align(pageDotWeather, LV_ALIGN_RIGHT_MID, -14, 0);
+  styleDot(pageDotClock, currentScreen == ScreenIndex::Clock, LV_ALIGN_LEFT_MID, 14);
+  styleDot(pageDotWeather, currentScreen == ScreenIndex::Weather, LV_ALIGN_CENTER, 0);
+  styleDot(pageDotPortrait, currentScreen == ScreenIndex::Portrait, LV_ALIGN_RIGHT_MID, -14);
 }
 
 // ---------------------------------------------------------------------------
@@ -800,6 +830,96 @@ void buildWeatherScreen(lv_obj_t *parent) {
   lv_obj_set_style_text_line_space(weatherUi.sunsetText, 2, 0);
 }
 
+void buildPortraitClockScreen(lv_obj_t *parent) {
+  portraitUi.root = makePlain(parent);
+  lv_obj_set_size(portraitUi.root, PORTRAIT_WIDTH, PORTRAIT_HEIGHT);
+  lv_obj_set_pos(portraitUi.root, 0, 0);
+  lv_obj_add_flag(portraitUi.root, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_style_bg_color(portraitUi.root, hex(COL_BG_1), 0);
+  lv_obj_set_style_bg_opa(portraitUi.root, LV_OPA_COVER, 0);
+
+  buildStatusRow(portraitUi.root, portraitUi.status, "CONNECTING", "");
+
+  lv_obj_t *stage = makeGlass(portraitUi.root, 400, 680, 24);
+  lv_obj_align(stage, LV_ALIGN_TOP_MID, 0, 56);
+
+  portraitUi.dayName = makeLabel(stage, "Thursday", &lv_font_montserrat_20, COL_INK);
+  lv_obj_align(portraitUi.dayName, LV_ALIGN_TOP_MID, 0, 18);
+
+  portraitUi.dateLong = makeLabel(stage, "23 APRIL 2026", &lv_font_montserrat_12, COL_INK_2);
+  lv_obj_align_to(portraitUi.dateLong, portraitUi.dayName, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
+
+  lv_obj_t *sep = makePlain(stage);
+  lv_obj_set_size(sep, 320, 1);
+  lv_obj_set_style_bg_color(sep, hex(COL_GLASS_STROKE), 0);
+  lv_obj_set_style_bg_opa(sep, LV_OPA_70, 0);
+  lv_obj_align_to(sep, portraitUi.dateLong, LV_ALIGN_OUT_BOTTOM_MID, 0, 12);
+
+  auto stylePortraitHero = [](lv_obj_t *l, int w, int h) {
+    lv_obj_set_size(l, w, h);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_CLIP);
+  };
+
+  portraitUi.hh = makeLabel(stage, "10", &lv_font_montserrat_48, COL_INK);
+  stylePortraitHero(portraitUi.hh, 120, 70);
+  lv_obj_align(portraitUi.hh, LV_ALIGN_TOP_MID, -72, 108);
+
+  portraitUi.colon = makeLabel(stage, ":", &lv_font_montserrat_48, COL_ACCENT);
+  stylePortraitHero(portraitUi.colon, 24, 70);
+  lv_obj_align(portraitUi.colon, LV_ALIGN_TOP_MID, 0, 108);
+
+  portraitUi.mm = makeLabel(stage, "42", &lv_font_montserrat_48, COL_INK);
+  stylePortraitHero(portraitUi.mm, 120, 70);
+  lv_obj_align(portraitUi.mm, LV_ALIGN_TOP_MID, 72, 108);
+
+  portraitUi.ampm = makeLabel(stage, "AM", &lv_font_montserrat_18, COL_INK_3);
+  lv_obj_align(portraitUi.ampm, LV_ALIGN_TOP_MID, 110, 152);
+
+  lv_obj_t *weatherCard = makeGlass(stage, 336, 112, 16);
+  lv_obj_align(weatherCard, LV_ALIGN_TOP_MID, 0, 246);
+
+  portraitUi.weatherIconCanvas = lv_canvas_create(weatherCard);
+  lv_obj_remove_style_all(portraitUi.weatherIconCanvas);
+  lv_obj_set_size(portraitUi.weatherIconCanvas, 56, 56);
+  lv_canvas_set_buffer(portraitUi.weatherIconCanvas, portraitIconBuf, 56, 56, LV_IMG_CF_TRUE_COLOR);
+  lv_obj_set_pos(portraitUi.weatherIconCanvas, 18, 28);
+
+  portraitUi.weatherTemp = makeLabel(weatherCard, "--\xC2\xB0", &lv_font_montserrat_28, COL_INK);
+  lv_obj_set_pos(portraitUi.weatherTemp, 96, 18);
+
+  portraitUi.weatherCond = makeLabel(weatherCard, "WAITING FOR DATA", &lv_font_montserrat_14, COL_INK_2);
+  lv_obj_set_pos(portraitUi.weatherCond, 96, 52);
+
+  portraitUi.weatherLoc = makeLabel(weatherCard, "--", &lv_font_montserrat_12, COL_INK_3);
+  lv_obj_set_pos(portraitUi.weatherLoc, 96, 76);
+
+  lv_obj_t *np = makeGlass(stage, 336, 98, 16);
+  lv_obj_align(np, LV_ALIGN_BOTTOM_MID, 0, -24);
+
+  lv_obj_t *album = makePlain(np);
+  lv_obj_set_size(album, 56, 56);
+  lv_obj_set_style_bg_color(album, hex(0xB85C3A), 0);
+  lv_obj_set_style_bg_grad_color(album, hex(0x6B3A7A), 0);
+  lv_obj_set_style_bg_grad_dir(album, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_bg_opa(album, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(album, 10, 0);
+  lv_obj_set_pos(album, 16, 21);
+
+  lv_obj_t *hole = makePlain(album);
+  lv_obj_set_size(hole, 10, 10);
+  lv_obj_set_style_radius(hole, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(hole, hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(hole, LV_OPA_60, 0);
+  lv_obj_align(hole, LV_ALIGN_CENTER, 0, 0);
+
+  portraitUi.nowPlayingTitle = makeLabel(np, "Resonance - Extended Mix", &lv_font_montserrat_14, COL_INK);
+  lv_obj_set_pos(portraitUi.nowPlayingTitle, 92, 24);
+
+  portraitUi.nowPlayingArtist = makeLabel(np, "HOME  Odyssey", &lv_font_montserrat_12, COL_INK_3);
+  lv_obj_set_pos(portraitUi.nowPlayingArtist, 92, 50);
+}
+
 // ---------------------------------------------------------------------------
 // Screen switching
 // ---------------------------------------------------------------------------
@@ -816,24 +936,56 @@ void animX(lv_obj_t *obj, int from, int to) {
   lv_anim_start(&a);
 }
 
+lv_obj_t *rootForScreen(ScreenIndex s) {
+  switch (s) {
+    case ScreenIndex::Clock: return clockUi.root;
+    case ScreenIndex::Weather: return weatherUi.root;
+    case ScreenIndex::Portrait: return portraitUi.root;
+    default: return clockUi.root;
+  }
+}
+
+const char *screenName(ScreenIndex s) {
+  switch (s) {
+    case ScreenIndex::Clock: return "clock";
+    case ScreenIndex::Weather: return "weather";
+    case ScreenIndex::Portrait: return "port";
+    default: return "clock";
+  }
+}
+
+bool isPortraitScreen(ScreenIndex s) {
+  return s == ScreenIndex::Portrait;
+}
+
+void applyScreenOrientation(ScreenIndex s) {
+  const bool portrait = isPortraitScreen(s);
+  display.setRotation(portrait ? 1 : 0);
+  lv_disp_set_rotation(lv_disp_get_default(), portrait ? LV_DISP_ROT_90 : LV_DISP_ROT_NONE);
+}
+
 // direction: 0 = no slide (instant), -1 = new screen enters from left,
 // +1 = new screen enters from right.
 void showScreen(ScreenIndex s, int direction = 0) {
   ScreenIndex prev = currentScreen;
   currentScreen = s;
 
-  lv_obj_t *incoming = (s == ScreenIndex::Clock) ? clockUi.root : weatherUi.root;
-  lv_obj_t *outgoing = (prev == ScreenIndex::Clock) ? clockUi.root : weatherUi.root;
+  if (isPortraitScreen(prev) != isPortraitScreen(s)) direction = 0;
+  applyScreenOrientation(s);
+
+  lv_obj_t *incoming = rootForScreen(s);
+  lv_obj_t *outgoing = rootForScreen(prev);
 
   lv_obj_clear_flag(incoming, LV_OBJ_FLAG_HIDDEN);
 
+  const lv_coord_t screenSpan = lv_disp_get_hor_res(nullptr);
   if (direction == 0 || incoming == outgoing) {
     lv_obj_set_x(incoming, 0);
     if (incoming != outgoing) lv_obj_add_flag(outgoing, LV_OBJ_FLAG_HIDDEN);
   } else {
-    lv_obj_set_x(incoming, direction > 0 ? SCREEN_WIDTH : -SCREEN_WIDTH);
-    animX(incoming, direction > 0 ? SCREEN_WIDTH : -SCREEN_WIDTH, 0);
-    animX(outgoing, 0, direction > 0 ? -SCREEN_WIDTH : SCREEN_WIDTH);
+    lv_obj_set_x(incoming, direction > 0 ? screenSpan : -screenSpan);
+    animX(incoming, direction > 0 ? screenSpan : -screenSpan, 0);
+    animX(outgoing, 0, direction > 0 ? -screenSpan : screenSpan);
     // outgoing will keep its off-screen x; re-hide it after the slide so it
     // doesn't eat input. We can't easily hook "anim complete" without a
     // callback struct, so just hide it when the next showScreen runs.
@@ -841,10 +993,12 @@ void showScreen(ScreenIndex s, int direction = 0) {
 
   // Hide the previously-outgoing screen's stale positions from earlier
   // toggles, other than the one we're animating right now.
-  lv_obj_t *other = (incoming == clockUi.root) ? weatherUi.root : clockUi.root;
-  if (other != outgoing) {
-    lv_obj_add_flag(other, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_x(other, 0);
+  lv_obj_t *roots[] = {clockUi.root, weatherUi.root, portraitUi.root};
+  for (lv_obj_t *other : roots) {
+    if (other && other != incoming && other != outgoing) {
+      lv_obj_add_flag(other, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_set_x(other, 0);
+    }
   }
 
   refreshPageDots();
@@ -854,7 +1008,8 @@ void showScreen(ScreenIndex s, int direction = 0) {
 }
 
 void toggleScreen() {
-  showScreen(currentScreen == ScreenIndex::Clock ? ScreenIndex::Weather : ScreenIndex::Clock, +1);
+  if (currentScreen == ScreenIndex::Clock) showScreen(ScreenIndex::Weather, +1);
+  else showScreen(ScreenIndex::Clock, +1);
 }
 
 // Swipe by logical direction: +1 moves to the next page (content slides left),
@@ -882,13 +1037,18 @@ void updateClockFace() {
     lv_label_set_text(clockUi.hh, pad2(h12).c_str());
     lv_label_set_text(clockUi.mm, pad2(tm.tm_min).c_str());
     lv_label_set_text(clockUi.ampm, ampm.c_str());
+    lv_label_set_text(portraitUi.hh, pad2(h12).c_str());
+    lv_label_set_text(portraitUi.mm, pad2(tm.tm_min).c_str());
+    lv_label_set_text(portraitUi.ampm, ampm.c_str());
 
     static const char *days[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
     static const char *months[] = {"JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE","JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"};
     lv_label_set_text(clockUi.dayName, days[tm.tm_wday]);
+    lv_label_set_text(portraitUi.dayName, days[tm.tm_wday]);
     char db[48];
     snprintf(db, sizeof(db), "%d  %s  %d", tm.tm_mday, months[tm.tm_mon], 1900 + tm.tm_year);
     lv_label_set_text(clockUi.dateLong, db);
+    lv_label_set_text(portraitUi.dateLong, db);
   }
 }
 
@@ -951,6 +1111,44 @@ void updateGlanceTile() {
   const char *iconCode = weatherData.iconCode.isEmpty() ? "01d" : weatherData.iconCode.c_str();
   renderIconToBuffer(weatherData.conditionId, iconCode, glanceIconBuf, 48, 48);
   lv_obj_invalidate(clockUi.glanceIconCanvas);
+}
+
+void updatePortraitClockUi() {
+  LinkState link = currentLinkState();
+
+  if (link == LinkState::Offline) {
+    lv_label_set_text(portraitUi.weatherTemp, "--\xC2\xB0");
+    lv_label_set_text(portraitUi.weatherCond, "NO WI-FI");
+    lv_label_set_text(portraitUi.weatherLoc, "OFFLINE");
+    renderIconToBuffer(741, "50d", portraitIconBuf, 56, 56);
+    lv_obj_invalidate(portraitUi.weatherIconCanvas);
+    return;
+  }
+
+  if (link == LinkState::NoData) {
+    lv_label_set_text(portraitUi.weatherTemp, "--\xC2\xB0");
+    lv_label_set_text(portraitUi.weatherCond, "WAITING FOR DATA");
+    lv_label_set_text(portraitUi.weatherLoc, "NO DATA");
+    renderIconToBuffer(803, "03d", portraitIconBuf, 56, 56);
+    lv_obj_invalidate(portraitUi.weatherIconCanvas);
+    return;
+  }
+
+  lv_label_set_text(portraitUi.weatherTemp, (String(weatherData.temperature) + "\xC2\xB0").c_str());
+
+  String cond = weatherData.condition;
+  cond.toUpperCase();
+  lv_label_set_text(portraitUi.weatherCond, cond.c_str());
+
+  String loc = weatherData.location;
+  int comma = loc.indexOf(',');
+  if (comma > 0) loc = loc.substring(0, comma);
+  loc.toUpperCase();
+  lv_label_set_text(portraitUi.weatherLoc, loc.c_str());
+
+  const char *iconCode = weatherData.iconCode.isEmpty() ? "01d" : weatherData.iconCode.c_str();
+  renderIconToBuffer(weatherData.conditionId, iconCode, portraitIconBuf, 56, 56);
+  lv_obj_invalidate(portraitUi.weatherIconCanvas);
 }
 
 void updateWeatherUi() {
@@ -1220,6 +1418,7 @@ bool fetchWeather() {
   if (!parseWeatherPayload(payload)) return false;
   updateWeatherUi();
   updateGlanceTile();
+  updatePortraitClockUi();
   return true;
 }
 
@@ -1236,11 +1435,12 @@ void handleSerialCommands() {
       cmd.trim(); cmd.toLowerCase();
       if (cmd.isEmpty()) return;
 
-      if (cmd == "clock" || cmd == "c") { showScreen(ScreenIndex::Clock); Serial.println("clock"); return; }
-      if (cmd == "weather" || cmd == "w") { showScreen(ScreenIndex::Weather); Serial.println("weather"); return; }
-      if (cmd == "toggle" || cmd == "t") { toggleScreen(); Serial.println(currentScreen == ScreenIndex::Clock ? "clock" : "weather"); return; }
-      if (cmd == "right" || cmd == ">") { swipeScreen(+1); Serial.println(currentScreen == ScreenIndex::Clock ? "clock" : "weather"); return; }
-      if (cmd == "left"  || cmd == "<") { swipeScreen(-1); Serial.println(currentScreen == ScreenIndex::Clock ? "clock" : "weather"); return; }
+      if (cmd == "clock" || cmd == "c") { showScreen(ScreenIndex::Clock); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "weather" || cmd == "w") { showScreen(ScreenIndex::Weather); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "port") { showScreen(ScreenIndex::Portrait); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "toggle" || cmd == "t") { toggleScreen(); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "right" || cmd == ">") { swipeScreen(+1); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "left"  || cmd == "<") { swipeScreen(-1); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "refresh" || cmd == "r") { fetchWeather(); Serial.println("refreshed"); return; }
       if (cmd.length() >= 2 && cmd[0] == 'd') {
         const String v = cmd.substring(1);
@@ -1253,7 +1453,7 @@ void handleSerialCommands() {
         Serial.println("use d<0-255>"); return;
       }
       if (cmd == "help" || cmd == "?") {
-        Serial.println("commands: clock|c, weather|w, toggle|t, left|<, right|>, refresh|r, d<0-255>, help|?");
+        Serial.println("commands: clock|c, weather|w, port, toggle|t, left|<, right|>, refresh|r, d<0-255>, help|?");
         return;
       }
       Serial.printf("unknown: %s\n", cmd.c_str());
@@ -1314,6 +1514,7 @@ void tickColonBlink() {
   lastColonBlink = now;
   colonVisible = !colonVisible;
   lv_obj_set_style_text_opa(clockUi.colon, colonVisible ? LV_OPA_COVER : LV_OPA_40, 0);
+  lv_obj_set_style_text_opa(portraitUi.colon, colonVisible ? LV_OPA_COVER : LV_OPA_40, 0);
 }
 
 void tickAutoRotate() {
@@ -1332,16 +1533,19 @@ void tickLinkState() {
   LinkState link = currentLinkState();
   setStatusRowState(clockUi.status, link);
   setStatusRowState(weatherUi.status, link);
+  setStatusRowState(portraitUi.status, link);
 
   const char *leftLabel = (link == LinkState::Online)  ? "CONNECTED"
                         : (link == LinkState::Offline) ? "OFFLINE"
                                                        : "NO DATA";
   lv_label_set_text(clockUi.status.connected,   leftLabel);
   lv_label_set_text(weatherUi.status.connected, leftLabel);
+  lv_label_set_text(portraitUi.status.connected, leftLabel);
 
   // Redraw the glance + weather panels so their labels track link state.
   updateGlanceTile();
   updateWeatherUi();
+  updatePortraitClockUi();
 }
 
 }  // namespace
@@ -1363,6 +1567,7 @@ void setup() {
 
   buildClockScreen(scr);
   buildWeatherScreen(scr);
+  buildPortraitClockScreen(scr);
   buildPageDots(scr);
   refreshPageDots();
   showStartupIconPreview(scr);
@@ -1372,7 +1577,12 @@ void setup() {
   lastAutoRotate = millis();
   lastColonBlink = millis();
 
-  Serial.println("UI ready. Commands: clock|c, weather|w, toggle|t, left|<, right|>, refresh|r, d<0-255>, help");
+  updateClockFace();
+  updateGlanceTile();
+  updateWeatherUi();
+  updatePortraitClockUi();
+
+  Serial.println("UI ready. Commands: clock|c, weather|w, port, toggle|t, left|<, right|>, refresh|r, d<0-255>, help");
   fetchWeather();
 }
 
