@@ -13,7 +13,7 @@
 
 #include "AppConfig.h"
 #include "CrowPanelDisplay.h"
-#include "OpenWeatherIconAssets.h"
+#include "WeatherIconsAssets.h"
 
 namespace {
 
@@ -26,6 +26,7 @@ constexpr uint32_t WEATHER_REFRESH_MS = 10UL * 60UL * 1000UL;
 constexpr uint32_t WIFI_RETRY_MS = 15000UL;
 constexpr uint32_t HTTP_TIMEOUT_MS = 15000UL;
 constexpr uint32_t STARTUP_COLOR_TEST_MS = 250UL;
+constexpr uint32_t STARTUP_ICON_PREVIEW_MS = 2000UL;
 constexpr uint32_t NTP_SYNC_WAIT_MS = 5000UL;
 constexpr long MIN_VALID_EPOCH_UTC = 1609459200L;  // 2021-01-01
 constexpr int BACKLIGHT_PIN = 2;
@@ -35,6 +36,8 @@ constexpr int BACKLIGHT_RESOLUTION_BITS = 8;
 constexpr uint8_t BACKLIGHT_BRIGHTNESS = 255;
 constexpr size_t DRAW_BUFFER_PIXEL_COUNT = SCREEN_WIDTH * 40;
 constexpr uint32_t AUTO_ROTATE_MS = 10000UL;
+constexpr uint16_t STARTUP_ICON_PREVIEW_SIZE = 32;
+constexpr uint8_t STARTUP_ICON_PREVIEW_COLUMNS = 10;
 
 constexpr CrowPanelModel DISPLAY_MODEL = CrowPanelModel::SevenInch;
 
@@ -67,7 +70,17 @@ enum class ScreenIndex : int {
 CrowPanelDisplay display(DISPLAY_MODEL);
 lv_disp_draw_buf_t drawBuffer;
 lv_color_t *drawBufferA = nullptr;
-lv_color_t weatherIconCanvasBuffer[kOpenWeatherIconWidth * kOpenWeatherIconHeight];
+lv_color_t weatherIconCanvasBuffer[kWeatherIconWidth * kWeatherIconHeight];
+constexpr int kStartupPreviewWeatherIds[] = {
+  200, 201, 202, 210, 211, 212, 221, 230, 231, 232,
+  300, 301, 302, 310, 311, 312, 313, 314, 321, 500,
+  501, 502, 503, 504, 511, 520, 521, 522, 531, 600,
+  601, 602, 611, 612, 615, 616, 620, 621, 622, 701,
+  711, 721, 731, 741, 761, 762, 781, 800, 801, 802,
+  803, 804, 900, 902, 903, 904, 906, 957
+};
+constexpr size_t kStartupPreviewWeatherIdCount =
+    sizeof(kStartupPreviewWeatherIds) / sizeof(kStartupPreviewWeatherIds[0]);
 
 // ---------------------------------------------------------------------------
 // Weather data
@@ -78,6 +91,7 @@ struct WeatherData {
   String condition;       // "Clear"
   String description;     // "clear sky"
   String iconCode;
+  int conditionId = 800;
   String unitsLabel;      // " F" or " C"
   String lastError;
   int temperature = 58;
@@ -265,13 +279,14 @@ void setBacklight(uint8_t brightness) {
   currentBacklightBrightness = brightness;
 }
 
-void renderIconToBuffer(const char *iconCode, lv_color_t *buffer, uint16_t w, uint16_t h) {
-  const uint8_t *rgb = getOpenWeatherIconAsset(iconCode);
+void renderIconToBuffer(int weatherId, const char *iconCode, lv_color_t *buffer, uint16_t w, uint16_t h) {
+  const bool isNight = iconCode != nullptr && strlen(iconCode) >= 3 && iconCode[2] == 'n';
+  const uint8_t *rgb = getWeatherIconAsset(weatherId, isNight);
   for (uint16_t y = 0; y < h; ++y) {
-    const uint16_t sy = static_cast<uint16_t>((static_cast<uint32_t>(y) * kOpenWeatherIconHeight) / h);
+    const uint16_t sy = static_cast<uint16_t>((static_cast<uint32_t>(y) * kWeatherIconHeight) / h);
     for (uint16_t x = 0; x < w; ++x) {
-      const uint16_t sx = static_cast<uint16_t>((static_cast<uint32_t>(x) * kOpenWeatherIconWidth) / w);
-      const size_t off = (static_cast<size_t>(sy) * kOpenWeatherIconWidth + sx) * 3;
+      const uint16_t sx = static_cast<uint16_t>((static_cast<uint32_t>(x) * kWeatherIconWidth) / w);
+      const size_t off = (static_cast<size_t>(sy) * kWeatherIconWidth + sx) * 3;
       buffer[static_cast<size_t>(y) * w + x] =
           lv_color_make(rgb[off], rgb[off + 1], rgb[off + 2]);
     }
@@ -908,7 +923,7 @@ void updateGlanceTile() {
   if (link == LinkState::Offline) {
     lv_label_set_text(clockUi.glanceTemp, "--\xC2\xB0");
     lv_label_set_text(clockUi.glanceCond, "NO WI-FI");
-    renderIconToBuffer("50d", glanceIconBuf, 48, 48);  // mist-ish muted icon
+    renderIconToBuffer(741, "50d", glanceIconBuf, 48, 48);  // fog fallback
     lv_obj_invalidate(clockUi.glanceIconCanvas);
     return;
   }
@@ -916,7 +931,7 @@ void updateGlanceTile() {
   if (link == LinkState::NoData) {
     lv_label_set_text(clockUi.glanceTemp, "--\xC2\xB0");
     lv_label_set_text(clockUi.glanceCond, "WAITING FOR DATA");
-    renderIconToBuffer("03d", glanceIconBuf, 48, 48);
+    renderIconToBuffer(803, "03d", glanceIconBuf, 48, 48);
     lv_obj_invalidate(clockUi.glanceIconCanvas);
     return;
   }
@@ -934,7 +949,7 @@ void updateGlanceTile() {
   lv_label_set_text(clockUi.glanceCond, combined.c_str());
 
   const char *iconCode = weatherData.iconCode.isEmpty() ? "01d" : weatherData.iconCode.c_str();
-  renderIconToBuffer(iconCode, glanceIconBuf, 48, 48);
+  renderIconToBuffer(weatherData.conditionId, iconCode, glanceIconBuf, 48, 48);
   lv_obj_invalidate(clockUi.glanceIconCanvas);
 }
 
@@ -1058,7 +1073,7 @@ void updateWeatherUi() {
 
   // Condition icon
   const char *iconCode = weatherData.iconCode.isEmpty() ? "01d" : weatherData.iconCode.c_str();
-  renderIconToBuffer(iconCode, condIconBuf, 56, 56);
+  renderIconToBuffer(weatherData.conditionId, iconCode, condIconBuf, 56, 56);
   lv_obj_invalidate(weatherUi.condIconCanvas);
 }
 
@@ -1083,6 +1098,68 @@ void connectWifiIfNeeded() {
   }
 }
 
+void showStartupIconPreview(lv_obj_t *parent) {
+  const size_t pixelsPerIcon = STARTUP_ICON_PREVIEW_SIZE * STARTUP_ICON_PREVIEW_SIZE;
+  const size_t previewBufferBytes = kStartupPreviewWeatherIdCount * pixelsPerIcon * sizeof(lv_color_t);
+  lv_color_t *previewBuffer = static_cast<lv_color_t *>(
+      heap_caps_malloc(previewBufferBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!previewBuffer) {
+    previewBuffer = static_cast<lv_color_t *>(
+        heap_caps_malloc(previewBufferBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  }
+  if (!previewBuffer) {
+    Serial.println("Skipping startup icon preview: insufficient RAM");
+    return;
+  }
+
+  lv_obj_t *overlay = makePlain(parent);
+  lv_obj_set_size(overlay, SCREEN_WIDTH, SCREEN_HEIGHT);
+  lv_obj_set_style_bg_color(overlay, hex(COL_BG_0), 0);
+  lv_obj_set_style_bg_opa(overlay, LV_OPA_COVER, 0);
+
+  lv_obj_t *title = makeLabel(overlay, "WEATHER ICONS", &lv_font_montserrat_20, COL_INK);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 22);
+
+  lv_obj_t *sub = makeLabel(overlay, "STARTUP PREVIEW", &lv_font_montserrat_12, COL_INK_3);
+  lv_obj_align_to(sub, title, LV_ALIGN_OUT_BOTTOM_MID, 0, 6);
+
+  constexpr int iconStep = 40;
+  const int rows = static_cast<int>((kStartupPreviewWeatherIdCount + STARTUP_ICON_PREVIEW_COLUMNS - 1) /
+                                    STARTUP_ICON_PREVIEW_COLUMNS);
+  const int gridW = STARTUP_ICON_PREVIEW_COLUMNS * iconStep;
+  const int gridH = rows * iconStep;
+  const int originX = (SCREEN_WIDTH - gridW) / 2;
+  const int originY = 92 + (SCREEN_HEIGHT - 92 - gridH) / 2;
+
+  for (size_t i = 0; i < kStartupPreviewWeatherIdCount; ++i) {
+    const int col = static_cast<int>(i % STARTUP_ICON_PREVIEW_COLUMNS);
+    const int row = static_cast<int>(i / STARTUP_ICON_PREVIEW_COLUMNS);
+    const bool isNight = (i % 2) != 0;
+    const char *iconCode = isNight ? "01n" : "01d";
+    lv_color_t *iconBuffer = previewBuffer + (i * pixelsPerIcon);
+
+    renderIconToBuffer(kStartupPreviewWeatherIds[i], iconCode, iconBuffer,
+                       STARTUP_ICON_PREVIEW_SIZE, STARTUP_ICON_PREVIEW_SIZE);
+
+    lv_obj_t *canvas = lv_canvas_create(overlay);
+    lv_obj_remove_style_all(canvas);
+    lv_obj_set_size(canvas, STARTUP_ICON_PREVIEW_SIZE, STARTUP_ICON_PREVIEW_SIZE);
+    lv_canvas_set_buffer(canvas, iconBuffer, STARTUP_ICON_PREVIEW_SIZE,
+                         STARTUP_ICON_PREVIEW_SIZE, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_set_pos(canvas, originX + col * iconStep + 4, originY + row * iconStep + 4);
+  }
+
+  const unsigned long start = millis();
+  while (millis() - start < STARTUP_ICON_PREVIEW_MS) {
+    lv_timer_handler();
+    delay(5);
+  }
+
+  lv_obj_del(overlay);
+  heap_caps_free(previewBuffer);
+  lv_timer_handler();
+}
+
 bool parseWeatherPayload(const String &payload) {
   JsonDocument doc;
   if (deserializeJson(doc, payload)) {
@@ -1093,6 +1170,7 @@ bool parseWeatherPayload(const String &payload) {
   weatherData.location = String(doc["name"] | "Unknown");
   const String country = String(doc["sys"]["country"] | "");
   if (!country.isEmpty()) { weatherData.location += ", "; weatherData.location += country; }
+  weatherData.conditionId = doc["weather"][0]["id"] | 800;
   weatherData.condition = String(doc["weather"][0]["main"] | "Unknown");
   weatherData.description = String(doc["weather"][0]["description"] | "");
   weatherData.iconCode = String(doc["weather"][0]["icon"] | "01d");
@@ -1287,6 +1365,7 @@ void setup() {
   buildWeatherScreen(scr);
   buildPageDots(scr);
   refreshPageDots();
+  showStartupIconPreview(scr);
 
   lastClockTick = millis();
   lastWeatherAttempt = millis() - WEATHER_REFRESH_MS;
