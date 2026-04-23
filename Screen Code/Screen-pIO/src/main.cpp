@@ -7,10 +7,12 @@
 #include <ctype.h>
 #include <esp_heap_caps.h>
 #include <lvgl.h>
+#include <string.h>
 #include <time.h>
 
 #include "AppConfig.h"
 #include "CrowPanelDisplay.h"
+#include "OpenWeatherIconAssets.h"
 
 namespace {
 
@@ -34,12 +36,14 @@ constexpr CrowPanelModel DISPLAY_MODEL = CrowPanelModel::SevenInch;
 CrowPanelDisplay display(DISPLAY_MODEL);
 lv_disp_draw_buf_t drawBuffer;
 lv_color_t *drawBufferA = nullptr;
+lv_color_t weatherIconCanvasBuffer[kOpenWeatherIconWidth * kOpenWeatherIconHeight];
 
 struct WeatherData {
   bool valid = false;
   String location;
   String condition;
   String description;
+  String iconCode;
   String unitsLabel;
   String lastError;
   int temperature = 0;
@@ -57,6 +61,10 @@ struct WeatherData {
 };
 
 struct DashboardUi {
+  lv_obj_t *hero = nullptr;
+  lv_obj_t *iconCard = nullptr;
+  lv_obj_t *iconTitle = nullptr;
+  lv_obj_t *iconCanvas = nullptr;
   lv_obj_t *status = nullptr;
   lv_obj_t *clock = nullptr;
   lv_obj_t *location = nullptr;
@@ -134,6 +142,12 @@ String compassDirection(int degrees) {
   return kDirections[index];
 }
 
+String toLowerCopy(const String &value) {
+  String lower = value;
+  lower.toLowerCase();
+  return lower;
+}
+
 void displayFlush(lv_disp_drv_t *dispDrv, const lv_area_t *area, lv_color_t *colorP) {
   const uint32_t width = static_cast<uint32_t>(area->x2 - area->x1 + 1);
   const uint32_t height = static_cast<uint32_t>(area->y2 - area->y1 + 1);
@@ -157,26 +171,46 @@ void setBacklight(uint8_t brightness) {
   ledcWrite(BACKLIGHT_CHANNEL, brightness);
 }
 
+lv_obj_t *createStyledBlock(lv_obj_t *parent, lv_color_t bgColor, lv_opa_t bgOpacity, int radius) {
+  lv_obj_t *obj = lv_obj_create(parent);
+  lv_obj_remove_style_all(obj);
+  lv_obj_set_style_bg_color(obj, bgColor, 0);
+  lv_obj_set_style_bg_opa(obj, bgOpacity, 0);
+  lv_obj_set_style_radius(obj, radius, 0);
+  return obj;
+}
+
+void updateWeatherIcon() {
+  const char *iconCode = weatherData.iconCode.isEmpty() ? "03d" : weatherData.iconCode.c_str();
+  const uint8_t *rgbData = getOpenWeatherIconAsset(iconCode);
+
+  for (size_t i = 0; i < (kOpenWeatherIconWidth * kOpenWeatherIconHeight); ++i) {
+    const size_t pixelOffset = i * 3;
+    weatherIconCanvasBuffer[i] = lv_color_make(rgbData[pixelOffset], rgbData[pixelOffset + 1], rgbData[pixelOffset + 2]);
+  }
+
+  lv_obj_invalidate(ui.iconCanvas);
+}
+
 void createMetricCard(lv_obj_t *parent, lv_obj_t **titleOut, lv_obj_t **valueOut) {
-  lv_obj_t *card = lv_obj_create(parent);
-  lv_obj_remove_style_all(card);
-  lv_obj_set_style_bg_color(card, lv_color_hex(0x122033), 0);
-  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(card, 18, 0);
+  lv_obj_t *card = createStyledBlock(parent, lv_color_hex(0x13263A), LV_OPA_90, 22);
   lv_obj_set_style_pad_all(card, 16, 0);
   lv_obj_set_style_border_width(card, 1, 0);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x234260), 0);
-  lv_obj_set_size(card, 176, 112);
+  lv_obj_set_style_border_color(card, lv_color_hex(0x244A70), 0);
+  lv_obj_set_style_shadow_width(card, 16, 0);
+  lv_obj_set_style_shadow_color(card, lv_color_hex(0x05101B), 0);
+  lv_obj_set_style_shadow_opa(card, LV_OPA_30, 0);
+  lv_obj_set_size(card, 196, 102);
   lv_obj_set_layout(card, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(card, 10, 0);
+  lv_obj_set_style_pad_row(card, 8, 0);
 
   lv_obj_t *title = lv_label_create(card);
-  lv_obj_set_style_text_color(title, lv_color_hex(0x89A9C6), 0);
+  lv_obj_set_style_text_color(title, lv_color_hex(0x88A8C7), 0);
   lv_obj_set_style_text_font(title, &lv_font_montserrat_18, 0);
 
   lv_obj_t *value = lv_label_create(card);
-  lv_obj_set_style_text_color(value, lv_color_hex(0xF4F8FC), 0);
+  lv_obj_set_style_text_color(value, lv_color_hex(0xF8FBFF), 0);
   lv_obj_set_style_text_font(value, &lv_font_montserrat_28, 0);
 
   *titleOut = title;
@@ -185,20 +219,19 @@ void createMetricCard(lv_obj_t *parent, lv_obj_t **titleOut, lv_obj_t **valueOut
 
 void createDashboardUi() {
   lv_obj_t *screen = lv_scr_act();
-  lv_obj_set_style_bg_color(screen, lv_color_hex(0x06111D), 0);
-  lv_obj_set_style_bg_grad_color(screen, lv_color_hex(0x102947), 0);
+  lv_obj_set_style_bg_color(screen, lv_color_hex(0x061320), 0);
+  lv_obj_set_style_bg_grad_color(screen, lv_color_hex(0x061320), 0);
   lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_VER, 0);
 
-  lv_obj_t *header = lv_obj_create(screen);
-  lv_obj_remove_style_all(header);
-  lv_obj_set_size(header, 760, 92);
-  lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 16);
-  lv_obj_set_style_bg_color(header, lv_color_hex(0x0B1A2A), 0);
-  lv_obj_set_style_bg_opa(header, LV_OPA_80, 0);
-  lv_obj_set_style_radius(header, 24, 0);
+  lv_obj_t *header = createStyledBlock(screen, lv_color_hex(0x0B1B2B), LV_OPA_80, 28);
+  lv_obj_set_size(header, 760, 96);
+  lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 18);
   lv_obj_set_style_pad_all(header, 20, 0);
   lv_obj_set_style_border_width(header, 1, 0);
-  lv_obj_set_style_border_color(header, lv_color_hex(0x1D3B5C), 0);
+  lv_obj_set_style_border_color(header, lv_color_hex(0x1C4269), 0);
+  lv_obj_set_style_shadow_width(header, 18, 0);
+  lv_obj_set_style_shadow_color(header, lv_color_hex(0x050D16), 0);
+  lv_obj_set_style_shadow_opa(header, LV_OPA_40, 0);
 
   ui.location = lv_label_create(header);
   lv_obj_set_style_text_color(ui.location, lv_color_hex(0xF4F8FC), 0);
@@ -218,51 +251,77 @@ void createDashboardUi() {
   lv_label_set_text(ui.clock, "--:--");
   lv_obj_align(ui.clock, LV_ALIGN_RIGHT_MID, 0, 0);
 
-  lv_obj_t *hero = lv_obj_create(screen);
-  lv_obj_remove_style_all(hero);
-  lv_obj_set_size(hero, 368, 328);
-  lv_obj_align(hero, LV_ALIGN_TOP_LEFT, 20, 128);
-  lv_obj_set_style_bg_color(hero, lv_color_hex(0x091726), 0);
-  lv_obj_set_style_bg_opa(hero, LV_OPA_80, 0);
-  lv_obj_set_style_radius(hero, 28, 0);
-  lv_obj_set_style_pad_all(hero, 24, 0);
-  lv_obj_set_style_border_width(hero, 1, 0);
-  lv_obj_set_style_border_color(hero, lv_color_hex(0x1F4265), 0);
-  lv_obj_set_layout(hero, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(hero, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(hero, 8, 0);
+  ui.hero = createStyledBlock(screen, lv_color_hex(0x0A1A2A), LV_OPA_90, 30);
+  lv_obj_set_size(ui.hero, 332, 330);
+  lv_obj_align(ui.hero, LV_ALIGN_TOP_LEFT, 20, 128);
+  lv_obj_set_style_pad_all(ui.hero, 22, 0);
+  lv_obj_set_style_pad_row(ui.hero, 8, 0);
+  lv_obj_set_style_border_width(ui.hero, 1, 0);
+  lv_obj_set_style_border_color(ui.hero, lv_color_hex(0x1E466B), 0);
+  lv_obj_set_style_shadow_width(ui.hero, 18, 0);
+  lv_obj_set_style_shadow_color(ui.hero, lv_color_hex(0x06111C), 0);
+  lv_obj_set_style_shadow_opa(ui.hero, LV_OPA_40, 0);
+  lv_obj_set_layout(ui.hero, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(ui.hero, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(ui.hero, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
-  ui.condition = lv_label_create(hero);
+  ui.iconCard = createStyledBlock(ui.hero, lv_color_hex(0x12314A), LV_OPA_90, 26);
+  lv_obj_set_size(ui.iconCard, 288, 144);
+  lv_obj_set_style_bg_grad_color(ui.iconCard, lv_color_hex(0x12314A), 0);
+  lv_obj_set_style_bg_grad_dir(ui.iconCard, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_border_width(ui.iconCard, 1, 0);
+  lv_obj_set_style_border_color(ui.iconCard, lv_color_hex(0x2B638E), 0);
+  lv_obj_set_layout(ui.iconCard, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(ui.iconCard, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(ui.iconCard, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(ui.iconCard, 18, 0);
+  lv_obj_set_style_pad_row(ui.iconCard, 8, 0);
+
+  ui.iconTitle = lv_label_create(ui.iconCard);
+  lv_obj_set_style_text_color(ui.iconTitle, lv_color_hex(0x8CC5F0), 0);
+  lv_obj_set_style_text_font(ui.iconTitle, &lv_font_montserrat_18, 0);
+  lv_label_set_text(ui.iconTitle, "Current Conditions");
+
+  ui.iconCanvas = lv_canvas_create(ui.iconCard);
+  lv_obj_remove_style_all(ui.iconCanvas);
+  lv_obj_set_size(ui.iconCanvas, kOpenWeatherIconWidth, kOpenWeatherIconHeight);
+  lv_canvas_set_buffer(ui.iconCanvas, weatherIconCanvasBuffer, kOpenWeatherIconWidth, kOpenWeatherIconHeight,
+                       LV_IMG_CF_TRUE_COLOR);
+  lv_canvas_fill_bg(ui.iconCanvas, lv_color_hex(0x12314A), LV_OPA_COVER);
+
+  ui.condition = lv_label_create(ui.hero);
   lv_obj_set_style_text_color(ui.condition, lv_color_hex(0x8FD4FF), 0);
   lv_obj_set_style_text_font(ui.condition, &lv_font_montserrat_22, 0);
+  lv_obj_set_width(ui.condition, 286);
   lv_label_set_text(ui.condition, "Condition");
 
-  ui.temperature = lv_label_create(hero);
+  ui.temperature = lv_label_create(ui.hero);
   lv_obj_set_style_text_color(ui.temperature, lv_color_hex(0xFFFFFF), 0);
   lv_obj_set_style_text_font(ui.temperature, &lv_font_montserrat_48, 0);
+  lv_obj_set_width(ui.temperature, 286);
   lv_label_set_text(ui.temperature, "--");
 
-  ui.description = lv_label_create(hero);
-  lv_obj_set_style_text_color(ui.description, lv_color_hex(0xD0E4F7), 0);
-  lv_obj_set_style_text_font(ui.description, &lv_font_montserrat_22, 0);
-  lv_label_set_long_mode(ui.description, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(ui.description, 320);
-  lv_label_set_text(ui.description, "Waiting for weather response");
-
-  ui.feelsLike = lv_label_create(hero);
+  ui.feelsLike = lv_label_create(ui.hero);
   lv_obj_set_style_text_color(ui.feelsLike, lv_color_hex(0x89A9C6), 0);
   lv_obj_set_style_text_font(ui.feelsLike, &lv_font_montserrat_18, 0);
+  lv_obj_set_width(ui.feelsLike, 286);
   lv_label_set_text(ui.feelsLike, "Feels like --");
 
-  lv_obj_t *grid = lv_obj_create(screen);
-  lv_obj_remove_style_all(grid);
-  lv_obj_set_size(grid, 376, 328);
+  ui.description = lv_label_create(ui.hero);
+  lv_obj_set_style_text_color(ui.description, lv_color_hex(0xD0E4F7), 0);
+  lv_obj_set_style_text_font(ui.description, &lv_font_montserrat_18, 0);
+  lv_label_set_long_mode(ui.description, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(ui.description, 286);
+  lv_label_set_text(ui.description, "Waiting for weather response");
+
+  lv_obj_t *grid = createStyledBlock(screen, lv_color_hex(0x000000), LV_OPA_TRANSP, 0);
+  lv_obj_set_size(grid, 408, 328);
   lv_obj_align(grid, LV_ALIGN_TOP_RIGHT, -20, 128);
   lv_obj_set_layout(grid, LV_LAYOUT_FLEX);
   lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-  lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_all(grid, 0, 0);
-  lv_obj_set_style_pad_row(grid, 16, 0);
+  lv_obj_set_style_pad_row(grid, 14, 0);
   lv_obj_set_style_pad_column(grid, 16, 0);
 
   lv_obj_t *title = nullptr;
@@ -289,6 +348,8 @@ void createDashboardUi() {
   createMetricCard(grid, &title, &ui.sunset);
   lv_label_set_text(title, "Sunset");
   lv_label_set_text(ui.sunset, "--");
+
+  updateWeatherIcon();
 }
 
 void updateDashboardUi() {
@@ -302,6 +363,7 @@ void updateDashboardUi() {
   lv_label_set_text(ui.clock, formatLocalTime(weatherData.observedAt, weatherData.timezoneOffset).c_str());
   lv_label_set_text(ui.condition, weatherData.condition.c_str());
   lv_label_set_text(ui.description, weatherData.description.c_str());
+  updateWeatherIcon();
 
   String temperatureText = String(weatherData.temperature) + String(weatherData.unitsLabel);
   lv_label_set_text(ui.temperature, temperatureText.c_str());
@@ -373,6 +435,7 @@ bool parseWeatherPayload(const String &payload) {
 
   weatherData.condition = String(doc["weather"][0]["main"] | "Unknown");
   weatherData.description = String(doc["weather"][0]["description"] | "No description");
+  weatherData.iconCode = String(doc["weather"][0]["icon"] | "03d");
   weatherData.description.toLowerCase();
   weatherData.temperature = lround(doc["main"]["temp"] | 0.0);
   weatherData.feelsLike = lround(doc["main"]["feels_like"] | 0.0);
