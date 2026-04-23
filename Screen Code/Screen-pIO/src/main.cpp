@@ -97,6 +97,8 @@ struct WeatherData {
   int conditionId = 800;
   String unitsLabel;      // " F" or " C"
   String lastError;
+  float latitude = 0.0f;
+  float longitude = 0.0f;
   int temperature = 58;
   int feelsLike = 56;
   int humidity = 47;
@@ -105,6 +107,9 @@ struct WeatherData {
   int windDeg = 225;       // SW default
   int cloudCover = 0;
   int visibilityKm = 16;
+  int airQualityIndex = 0;
+  int pm25 = 0;
+  int pm10 = 0;
   long sunrise = 0;
   long sunset = 0;
   long observedAt = 0;
@@ -179,6 +184,7 @@ struct WeatherUi {
   lv_obj_t *windTileSub = nullptr;
   lv_obj_t *windArrow = nullptr;
   lv_obj_t *aqiVal = nullptr;
+  lv_obj_t *aqiSub = nullptr;
   lv_obj_t *aqiArc = nullptr;
 
   lv_obj_t *sunArc = nullptr;         // lv_arc for the daylight curve
@@ -284,6 +290,17 @@ String compassDirection(int degrees) {
   const int normalized = ((degrees % 360) + 360) % 360;
   const int index = (normalized + 22) / 45 % 8;
   return kDirections[index];
+}
+
+const char *airQualityLabel(int aqi) {
+  switch (aqi) {
+    case 1: return "GOOD";
+    case 2: return "FAIR";
+    case 3: return "MODERATE";
+    case 4: return "POOR";
+    case 5: return "VERY POOR";
+    default: return "--";
+  }
 }
 
 void displayFlush(lv_disp_drv_t *dispDrv, const lv_area_t *area, lv_color_t *colorP) {
@@ -740,16 +757,8 @@ void buildWeatherScreen(lv_obj_t *parent) {
   weatherUi.windTileSub = makeLabel(wind, "--", &lv_font_montserrat_12, COL_INK_3);
   lv_obj_set_pos(weatherUi.windTileSub, 14, rowH - 22);
 
-  // Wind direction dial
-  lv_obj_t *wdial = makePlain(wind);
-  lv_obj_set_size(wdial, 38, 38);
-  lv_obj_set_pos(wdial, colW - 52, rowH - 50);
-  lv_obj_set_style_radius(wdial, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_border_width(wdial, 1, 0);
-  lv_obj_set_style_border_color(wdial, hex(COL_GLASS_STROKE_STRONG), 0);
-  lv_obj_set_style_border_opa(wdial, LV_OPA_COVER, 0);
-  weatherUi.windArrow = makeLabel(wdial, LV_SYMBOL_UP, &lv_font_montserrat_16, COL_ACCENT);
-  lv_obj_center(weatherUi.windArrow);
+  weatherUi.windArrow = makeLabel(wind, LV_SYMBOL_UP, &lv_font_montserrat_16, COL_ACCENT);
+  lv_obj_set_pos(weatherUi.windArrow, colW - 28, rowH - 34);
   lv_obj_set_style_transform_angle(weatherUi.windArrow, 2250, 0);  // 225 deg (SW)
   lv_obj_set_style_transform_pivot_x(weatherUi.windArrow, 6, 0);
   lv_obj_set_style_transform_pivot_y(weatherUi.windArrow, 10, 0);
@@ -761,8 +770,8 @@ void buildWeatherScreen(lv_obj_t *parent) {
   lv_obj_align(al, LV_ALIGN_TOP_LEFT, 14, 12);
   weatherUi.aqiVal = makeLabel(aqi, "--", &lv_font_montserrat_28, COL_INK);
   lv_obj_set_pos(weatherUi.aqiVal, 14, 34);
-  lv_obj_t *asub = makeLabel(aqi, "--", &lv_font_montserrat_12, COL_INK_3);
-  lv_obj_set_pos(asub, 14, rowH - 22);
+  weatherUi.aqiSub = makeLabel(aqi, "--", &lv_font_montserrat_12, COL_INK_3);
+  lv_obj_set_pos(weatherUi.aqiSub, 14, rowH - 22);
 
   weatherUi.aqiArc = lv_arc_create(aqi);
   lv_obj_remove_style(weatherUi.aqiArc, nullptr, LV_PART_KNOB);
@@ -1174,6 +1183,7 @@ void updateWeatherUi() {
   if (link != LinkState::Online) {
     const char *hero = (link == LinkState::Offline) ? "OFFLINE" : "NO DATA";
     lv_label_set_text(weatherUi.locLabel, (String(LV_SYMBOL_GPS) + " " + hero).c_str());
+    lv_label_set_text(weatherUi.coordLabel, "");
     lv_label_set_text(weatherUi.bigTemp, "--\xC2\xB0");
     lv_label_set_text(weatherUi.condLabel, hero);
     lv_label_set_text(weatherUi.feelsLabel, "-- \xC2\xB7 --");
@@ -1188,6 +1198,7 @@ void updateWeatherUi() {
     lv_label_set_text(weatherUi.windTileVal, "--");
     lv_label_set_text(weatherUi.windTileSub, "--");
     lv_label_set_text(weatherUi.aqiVal, "--");
+    lv_label_set_text(weatherUi.aqiSub, "--");
     lv_arc_set_value(weatherUi.aqiArc, 0);
     lv_label_set_text(weatherUi.sunriseText, "SUNRISE\n--:--");
     lv_label_set_text(weatherUi.sunsetText, "SUNSET\n--:--");
@@ -1201,6 +1212,9 @@ void updateWeatherUi() {
   loc.toUpperCase();
   String locLine = String(LV_SYMBOL_GPS) + " " + loc;
   lv_label_set_text(weatherUi.locLabel, locLine.c_str());
+  char coordBuf[32];
+  snprintf(coordBuf, sizeof(coordBuf), "%.2f, %.2f", weatherData.latitude, weatherData.longitude);
+  lv_label_set_text(weatherUi.coordLabel, coordBuf);
 
   // Big temp
   String bt = String(weatherData.temperature) + "\xC2\xB0";
@@ -1244,6 +1258,25 @@ void updateWeatherUi() {
   // Rotate wind arrow. LVGL transform_angle is in 0.1 deg units.
   int16_t angle = static_cast<int16_t>((weatherData.windDeg + 180) % 360) * 10;
   lv_obj_set_style_transform_angle(weatherUi.windArrow, angle, 0);
+
+  if (weatherData.airQualityIndex > 0) {
+    String aqiValText = String(weatherData.airQualityIndex);
+    lv_label_set_text(weatherUi.aqiVal, aqiValText.c_str());
+  } else {
+    lv_label_set_text(weatherUi.aqiVal, "--");
+  }
+  if (weatherData.airQualityIndex > 0) {
+    char aqiSubBuf[32];
+    snprintf(aqiSubBuf, sizeof(aqiSubBuf), "%s  PM %.0f/%.0f",
+             airQualityLabel(weatherData.airQualityIndex),
+             static_cast<double>(weatherData.pm25),
+             static_cast<double>(weatherData.pm10));
+    lv_label_set_text(weatherUi.aqiSub, aqiSubBuf);
+    lv_arc_set_value(weatherUi.aqiArc, weatherData.airQualityIndex * 20);
+  } else {
+    lv_label_set_text(weatherUi.aqiSub, "--");
+    lv_arc_set_value(weatherUi.aqiArc, 0);
+  }
 
   // Sunrise / sunset
   lv_label_set_text(weatherUi.sunriseText,
@@ -1368,6 +1401,8 @@ bool parseWeatherPayload(const String &payload) {
   weatherData.location = String(doc["name"] | "Unknown");
   const String country = String(doc["sys"]["country"] | "");
   if (!country.isEmpty()) { weatherData.location += ", "; weatherData.location += country; }
+  weatherData.latitude = doc["coord"]["lat"] | 0.0f;
+  weatherData.longitude = doc["coord"]["lon"] | 0.0f;
   weatherData.conditionId = doc["weather"][0]["id"] | 800;
   weatherData.condition = String(doc["weather"][0]["main"] | "Unknown");
   weatherData.description = String(doc["weather"][0]["description"] | "");
@@ -1389,6 +1424,42 @@ bool parseWeatherPayload(const String &payload) {
   weatherData.valid = true;
   const long systemEpoch = readSystemEpochUtc();
   currentLocalEpochUtc = systemEpoch > 0 ? systemEpoch : weatherData.observedAt;
+  return true;
+}
+
+bool fetchAirPollution() {
+  if (strlen(OPENWEATHER_API_KEY) == 0) return false;
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  WiFiClientSecure client; client.setInsecure();
+  HTTPClient http;
+  String url = "https://api.openweathermap.org/data/2.5/air_pollution?lat=";
+  url += String(weatherData.latitude, 6);
+  url += "&lon=";
+  url += String(weatherData.longitude, 6);
+  url += "&appid=";
+  url += OPENWEATHER_API_KEY;
+
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  if (!http.begin(client, url)) return false;
+
+  const int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    http.end();
+    return false;
+  }
+
+  const String payload = http.getString();
+  http.end();
+
+  JsonDocument doc;
+  if (deserializeJson(doc, payload)) return false;
+  JsonVariant current = doc["list"][0];
+  if (current.isNull()) return false;
+
+  weatherData.airQualityIndex = current["main"]["aqi"] | 0;
+  weatherData.pm25 = lround(current["components"]["pm2_5"] | 0.0);
+  weatherData.pm10 = lround(current["components"]["pm10"] | 0.0);
   return true;
 }
 
@@ -1416,6 +1487,7 @@ bool fetchWeather() {
   const String payload = http.getString();
   http.end();
   if (!parseWeatherPayload(payload)) return false;
+  fetchAirPollution();
   updateWeatherUi();
   updateGlanceTile();
   updatePortraitClockUi();
