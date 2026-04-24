@@ -85,7 +85,8 @@ enum class ScreenIndex : int {
   Clock = 0,
   Weather = 1,
   Portrait = 2,
-  Count = 3,
+  Music = 3,    // Reached via "up" from Clock; not part of the swipe carousel.
+  Count = 3,    // Count of screens that participate in swipe rotation (Clock/Weather/Portrait).
 };
 
 CrowPanelDisplay display(DISPLAY_MODEL);
@@ -186,6 +187,64 @@ struct PortraitClockUi {
   lv_obj_t *nowPlayingArtist = nullptr;
 } portraitUi;
 lv_color_t portraitIconBuf[56 * 56];
+
+// ---------------------------------------------------------------------------
+// Music player screen UI + state
+// ---------------------------------------------------------------------------
+constexpr int kMusicSoundbarCount = 14;
+
+struct MusicTrack {
+  const char *title;
+  const char *artist;
+  const char *album;
+  uint32_t albumTop;     // gradient top color
+  uint32_t albumBottom;  // gradient bottom color
+  uint32_t accent;       // track-specific accent (progress + controls glow)
+  int durationSec;
+};
+
+constexpr MusicTrack kMusicTracks[] = {
+    {"Resonance - Extended Mix", "HOME",        "Odyssey",     0xB85C3A, 0x6B3A7A, 0x7CD4F2, 272},
+    {"Midnight City",            "M83",         "Hurry Up",    0x2B1B4E, 0xE94E77, 0xE94E77, 244},
+    {"Nightcall",                "Kavinsky",    "OutRun",      0x1A1A2E, 0xFF2975, 0xFF2975, 258},
+    {"Strobe",                   "Deadmau5",    "For Lack Of", 0x0F2027, 0x2C5364, 0x38EF7D, 634},
+    {"Glow",                     "Oliver",      "Full Circle", 0xFFB86B, 0xFF6B9D, 0xFFB86B, 218},
+};
+constexpr int kMusicTrackCount = sizeof(kMusicTracks) / sizeof(kMusicTracks[0]);
+
+struct MusicUi {
+  lv_obj_t *root = nullptr;
+  StatusRow status;
+  lv_obj_t *album = nullptr;
+  lv_obj_t *albumGlowA = nullptr;   // inner radial highlight
+  lv_obj_t *albumGlowB = nullptr;   // outer corner tint
+  lv_obj_t *albumCounter = nullptr; // "TRACK 02 • OF 04" overlay label
+  lv_obj_t *title = nullptr;
+  lv_obj_t *artistAlbum = nullptr;  // "HOME · Odyssey"
+  lv_obj_t *progressFill = nullptr;
+  lv_obj_t *progressKnob = nullptr;
+  lv_obj_t *progressKnobHalo = nullptr;
+  lv_obj_t *timeElapsed = nullptr;
+  lv_obj_t *timeTotal = nullptr;
+  lv_obj_t *shuffleBtn = nullptr;
+  lv_obj_t *prevBtn = nullptr;
+  lv_obj_t *playBtn = nullptr;
+  lv_obj_t *playGlow = nullptr;     // halo ring behind the play button
+  lv_obj_t *playIcon = nullptr;
+  lv_obj_t *nextBtn = nullptr;
+  lv_obj_t *repeatBtn = nullptr;
+  lv_obj_t *soundbars[kMusicSoundbarCount] = {nullptr};
+  int progressRailWidth = 0;
+  int soundbarBaseY = 0;
+  int soundbarHeight = 0;
+} musicUi;
+
+int musicTrackIndex = 0;
+bool musicIsPlaying = true;
+int musicElapsedSec = 42;         // pre-seeded so the progress bar isn't empty on boot
+unsigned long musicLastTickMs = 0;
+unsigned long musicLastBarAnimMs = 0;
+uint8_t musicSoundbarPhase[kMusicSoundbarCount] = {0};
 
 struct WeatherUi {
   lv_obj_t *root = nullptr;
@@ -977,6 +1036,371 @@ void buildPortraitClockScreen(lv_obj_t *parent) {
 }
 
 // ---------------------------------------------------------------------------
+// Music player screen
+// ---------------------------------------------------------------------------
+// Rotating neon palette for the animated soundbars.
+constexpr uint32_t kSoundbarPalette[] = {
+    0x7CD4F2,  // cyan
+    0x38EF7D,  // mint
+    0xFFE66D,  // yellow
+    0xFF8C42,  // orange
+    0xFF2975,  // magenta
+    0xB06BFF,  // purple
+    0x4CC9F0,  // sky
+};
+constexpr int kSoundbarPaletteCount = sizeof(kSoundbarPalette) / sizeof(kSoundbarPalette[0]);
+
+String musicFormatTime(int totalSec) {
+  if (totalSec < 0) totalSec = 0;
+  const int m = totalSec / 60;
+  const int s = totalSec % 60;
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%d:%02d", m, s);
+  return String(buf);
+}
+
+const MusicTrack &musicCurrentTrack() {
+  return kMusicTracks[musicTrackIndex];
+}
+
+// Build one of the round secondary controls (shuffle/prev/next/repeat) so the
+// trio of small buttons share one styling path and stay visually consistent.
+lv_obj_t *makeMusicSecondaryBtn(lv_obj_t *parent, int size, const char *symbol,
+                                const lv_font_t *font, uint32_t iconColor) {
+  lv_obj_t *b = makePlain(parent);
+  lv_obj_set_size(b, size, size);
+  lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_opa(b, LV_OPA_0, 0);
+  lv_obj_set_style_border_width(b, 0, 0);
+  lv_obj_t *lbl = makeLabel(b, symbol, font, iconColor);
+  lv_obj_center(lbl);
+  return b;
+}
+
+void buildMusicScreen(lv_obj_t *parent) {
+  musicUi.root = makePlain(parent);
+  lv_obj_set_size(musicUi.root, SCREEN_WIDTH, SCREEN_HEIGHT);
+  lv_obj_set_pos(musicUi.root, 0, 0);
+  lv_obj_add_flag(musicUi.root, LV_OBJ_FLAG_HIDDEN);
+
+  // Backdrop — very dark teal/navy, slightly lighter toward the right to
+  // match the reference. A single subtle horizontal gradient does the job;
+  // no ambient blobs, which kept the reference looking clean.
+  lv_obj_set_style_bg_color(musicUi.root, hex(0x060A12), 0);
+  lv_obj_set_style_bg_grad_color(musicUi.root, hex(0x10172A), 0);
+  lv_obj_set_style_bg_grad_dir(musicUi.root, LV_GRAD_DIR_HOR, 0);
+  lv_obj_set_style_bg_opa(musicUi.root, LV_OPA_COVER, 0);
+
+  // Status strip — left: accent dot + "NOW PLAYING · SPOTIFY"; right: room + battery.
+  buildStatusRow(musicUi.root, musicUi.status, "NOW PLAYING \xC2\xB7 SPOTIFY",
+                 "LIVING ROOM \xC2\xB7 68%");
+
+  // ---------------- Layout constants ----------------
+  const int padX = 32;
+  const int contentTop = 48;
+  const int contentBottom = SCREEN_HEIGHT - 20;
+  const int albumSize = 300;
+  const int albumX = padX;
+  const int albumY = contentTop + 20;  // leaves air under the status strip
+
+  const int rightX = albumX + albumSize + 36;
+  const int rightW = SCREEN_WIDTH - rightX - padX;
+
+  // ---------------- Album art ----------------
+  // Stacked layers: base deep-purple square, a teal radial "sun" pushed to the
+  // upper-left, and a subtle dark corner vignette on the lower-right. Together
+  // they fake the oklch radial gradient from the mockup on an LVGL build that
+  // has no real radial gradient.
+  musicUi.album = makePlain(musicUi.root);
+  lv_obj_set_size(musicUi.album, albumSize, albumSize);
+  lv_obj_set_pos(musicUi.album, albumX, albumY);
+  lv_obj_set_style_radius(musicUi.album, 20, 0);
+  lv_obj_set_style_bg_color(musicUi.album, hex(0x3B2656), 0);      // mid purple
+  lv_obj_set_style_bg_grad_color(musicUi.album, hex(0x1B1430), 0); // deep purple
+  lv_obj_set_style_bg_grad_dir(musicUi.album, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_bg_opa(musicUi.album, LV_OPA_COVER, 0);
+  lv_obj_set_style_clip_corner(musicUi.album, true, 0);
+
+  // Teal radial "sun" — offset circle larger than the tile, clipped by the
+  // album's rounded corners so it becomes a soft radial bloom in the UL area.
+  musicUi.albumGlowA = makePlain(musicUi.album);
+  const int glowA = 360;
+  lv_obj_set_size(musicUi.albumGlowA, glowA, glowA);
+  lv_obj_set_pos(musicUi.albumGlowA, -120, -140);
+  lv_obj_set_style_radius(musicUi.albumGlowA, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(musicUi.albumGlowA, hex(0x2AB6C9), 0);
+  lv_obj_set_style_bg_opa(musicUi.albumGlowA, LV_OPA_70, 0);
+
+  // Inner smaller bright core to fake the radial intensity falloff.
+  lv_obj_t *core = makePlain(musicUi.album);
+  lv_obj_set_size(core, 200, 200);
+  lv_obj_set_pos(core, -40, -60);
+  lv_obj_set_style_radius(core, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(core, hex(0x5BDCE9), 0);
+  lv_obj_set_style_bg_opa(core, LV_OPA_40, 0);
+
+  // Purple wash on the right half to blend into the deep-purple base.
+  musicUi.albumGlowB = makePlain(musicUi.album);
+  lv_obj_set_size(musicUi.albumGlowB, 280, 280);
+  lv_obj_set_pos(musicUi.albumGlowB, 120, 120);
+  lv_obj_set_style_radius(musicUi.albumGlowB, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(musicUi.albumGlowB, hex(0x8B3DBB), 0);
+  lv_obj_set_style_bg_opa(musicUi.albumGlowB, LV_OPA_40, 0);
+
+  // Track counter in the bottom-left corner.
+  musicUi.albumCounter = makeLabel(musicUi.album, "TRACK 02 \xC2\xB7 OF 04",
+                                   &lv_font_montserrat_12, COL_INK_2);
+  lv_obj_set_style_text_letter_space(musicUi.albumCounter, 2, 0);
+  lv_obj_align(musicUi.albumCounter, LV_ALIGN_BOTTOM_LEFT, 18, -18);
+
+  // ---------------- Eyebrow + title + artist ----------------
+  // Small cyan accent bar + "NOW PLAYING" caption, just above the title.
+  const int eyebrowY = albumY + 14;
+  lv_obj_t *eyebrowBar = makePlain(musicUi.root);
+  lv_obj_set_size(eyebrowBar, 20, 2);
+  lv_obj_set_pos(eyebrowBar, rightX, eyebrowY + 7);
+  lv_obj_set_style_bg_color(eyebrowBar, hex(COL_ACCENT), 0);
+  lv_obj_set_style_bg_opa(eyebrowBar, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(eyebrowBar, 1, 0);
+
+  lv_obj_t *eyebrow = makeLabel(musicUi.root, "NOW PLAYING",
+                                &lv_font_montserrat_12, COL_ACCENT);
+  lv_obj_set_style_text_letter_space(eyebrow, 2, 0);
+  lv_obj_set_pos(eyebrow, rightX + 28, eyebrowY);
+
+  // Title — big and bold. Montserrat 42 fits "Resonance — Extended Mix" in
+  // the right-column width at 800×480 without clipping; longer titles wrap
+  // to a second line. Uses an em-dash matching the reference screenshot.
+  musicUi.title = makeLabel(musicUi.root, kMusicTracks[0].title,
+                            &lv_font_montserrat_42, COL_INK);
+  lv_obj_set_width(musicUi.title, rightW);
+  lv_label_set_long_mode(musicUi.title, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_letter_space(musicUi.title, -1, 0);
+  lv_obj_set_pos(musicUi.title, rightX, eyebrowY + 24);
+
+  // Secondary line — "ARTIST · ALBUM" using a middle-dot separator.
+  char artistAlbumBuf[96];
+  snprintf(artistAlbumBuf, sizeof(artistAlbumBuf), "%s \xC2\xB7 %s",
+           kMusicTracks[0].artist, kMusicTracks[0].album);
+  musicUi.artistAlbum = makeLabel(musicUi.root, artistAlbumBuf,
+                                  &lv_font_montserrat_18, COL_INK_2);
+  lv_obj_set_width(musicUi.artistAlbum, rightW);
+  lv_label_set_long_mode(musicUi.artistAlbum, LV_LABEL_LONG_DOT);
+  // Title is Montserrat 42 and may wrap to two lines (~50 px line height),
+  // so the artist line needs to clear 2 wrapped lines below the title start.
+  lv_obj_set_pos(musicUi.artistAlbum, rightX, eyebrowY + 130);
+
+  // ---------------- Soundbars (between title and progress) ----------------
+  const int barsAreaX = rightX;
+  const int barsAreaW = rightW;
+  const int barsTop = eyebrowY + 168;
+  const int barsBottomY = barsTop + 90;
+  const int barsH = barsBottomY - barsTop;
+  const int barW = 18;
+  const int barGap = (barsAreaW - barW * kMusicSoundbarCount) / (kMusicSoundbarCount - 1);
+
+  musicUi.soundbarBaseY = barsBottomY;
+  musicUi.soundbarHeight = barsH;
+
+  for (int i = 0; i < kMusicSoundbarCount; ++i) {
+    lv_obj_t *bar = makePlain(musicUi.root);
+    const int h = 24 + (i * 13) % (barsH - 32);
+    lv_obj_set_size(bar, barW, h);
+    lv_obj_set_pos(bar, barsAreaX + i * (barW + barGap), barsBottomY - h);
+    lv_obj_set_style_radius(bar, 4, 0);
+    const uint32_t color = kSoundbarPalette[i % kSoundbarPaletteCount];
+    lv_obj_set_style_bg_color(bar, hex(color), 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    // Slight halo so the bars bloom on the dark backdrop.
+    lv_obj_set_style_shadow_width(bar, 12, 0);
+    lv_obj_set_style_shadow_color(bar, hex(color), 0);
+    lv_obj_set_style_shadow_opa(bar, LV_OPA_40, 0);
+    musicUi.soundbars[i] = bar;
+    musicSoundbarPhase[i] = (uint8_t)((i * 37) & 0xFF);
+  }
+
+  // ---------------- Progress rail ----------------
+  const int railW = rightW;
+  const int railH = 4;
+  const int railY = barsBottomY + 20;
+  musicUi.progressRailWidth = railW;
+  lv_obj_t *rail = makePlain(musicUi.root);
+  lv_obj_set_size(rail, railW, railH);
+  lv_obj_set_pos(rail, rightX, railY);
+  lv_obj_set_style_radius(rail, railH / 2, 0);
+  lv_obj_set_style_bg_color(rail, hex(0x253146), 0);
+  lv_obj_set_style_bg_opa(rail, LV_OPA_COVER, 0);
+
+  musicUi.progressFill = makePlain(rail);
+  lv_obj_set_size(musicUi.progressFill, railW / 4, railH);
+  lv_obj_set_pos(musicUi.progressFill, 0, 0);
+  lv_obj_set_style_radius(musicUi.progressFill, railH / 2, 0);
+  lv_obj_set_style_bg_color(musicUi.progressFill, hex(0x4A6B8A), 0);
+  lv_obj_set_style_bg_grad_color(musicUi.progressFill, hex(COL_ACCENT), 0);
+  lv_obj_set_style_bg_grad_dir(musicUi.progressFill, LV_GRAD_DIR_HOR, 0);
+  lv_obj_set_style_bg_opa(musicUi.progressFill, LV_OPA_COVER, 0);
+
+  // Ring-style knob: white inner with a translucent outer "halo" layer.
+  musicUi.progressKnobHalo = makePlain(rail);
+  lv_obj_set_size(musicUi.progressKnobHalo, 20, 20);
+  lv_obj_set_style_radius(musicUi.progressKnobHalo, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(musicUi.progressKnobHalo, hex(COL_ACCENT), 0);
+  lv_obj_set_style_bg_opa(musicUi.progressKnobHalo, LV_OPA_30, 0);
+  lv_obj_set_pos(musicUi.progressKnobHalo, railW / 4 - 10, (railH - 20) / 2);
+
+  musicUi.progressKnob = makePlain(rail);
+  lv_obj_set_size(musicUi.progressKnob, 12, 12);
+  lv_obj_set_style_radius(musicUi.progressKnob, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(musicUi.progressKnob, hex(0xFFFFFF), 0);
+  lv_obj_set_style_bg_opa(musicUi.progressKnob, LV_OPA_COVER, 0);
+  lv_obj_set_style_shadow_width(musicUi.progressKnob, 18, 0);
+  lv_obj_set_style_shadow_color(musicUi.progressKnob, hex(COL_ACCENT), 0);
+  lv_obj_set_style_shadow_opa(musicUi.progressKnob, LV_OPA_80, 0);
+  lv_obj_set_pos(musicUi.progressKnob, railW / 4 - 6, (railH - 12) / 2);
+
+  // Time labels under the rail
+  musicUi.timeElapsed = makeLabel(musicUi.root, "0:00",
+                                  &lv_font_montserrat_14, COL_INK_2);
+  lv_obj_set_pos(musicUi.timeElapsed, rightX, railY + 14);
+
+  musicUi.timeTotal = makeLabel(musicUi.root, "0:00",
+                                &lv_font_montserrat_14, COL_INK_3);
+  lv_obj_set_style_text_align(musicUi.timeTotal, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_set_width(musicUi.timeTotal, 70);
+  lv_obj_set_pos(musicUi.timeTotal, rightX + railW - 70, railY + 14);
+
+  // ---------------- Controls row ----------------
+  // shuffle, prev, [big cyan play], next, repeat — centered inside the right column.
+  const int smallSize = 36;
+  const int prevNextSize = 44;
+  const int playSize = 66;
+  const int gap = 18;
+
+  const int ctrlY = contentBottom - playSize - 2;
+  const int ctrlGroupW = smallSize + gap + prevNextSize + gap + playSize + gap + prevNextSize + gap + smallSize;
+  const int ctrlX = rightX + (rightW - ctrlGroupW) / 2;
+  const int midY = ctrlY + playSize / 2;
+
+  int x = ctrlX;
+  // Shuffle
+  musicUi.shuffleBtn = makeMusicSecondaryBtn(musicUi.root, smallSize, LV_SYMBOL_SHUFFLE,
+                                             &lv_font_montserrat_18, COL_INK_2);
+  lv_obj_set_pos(musicUi.shuffleBtn, x, midY - smallSize / 2);
+  x += smallSize + gap;
+
+  // Prev
+  musicUi.prevBtn = makeMusicSecondaryBtn(musicUi.root, prevNextSize, LV_SYMBOL_PREV,
+                                          &lv_font_montserrat_24, COL_INK);
+  lv_obj_set_pos(musicUi.prevBtn, x, midY - prevNextSize / 2);
+  x += prevNextSize + gap;
+
+  // Play/pause halo — sits behind the button as a larger soft-cyan disk.
+  musicUi.playGlow = makePlain(musicUi.root);
+  const int glowSize = playSize + 26;
+  lv_obj_set_size(musicUi.playGlow, glowSize, glowSize);
+  lv_obj_set_pos(musicUi.playGlow, x - (glowSize - playSize) / 2,
+                 midY - glowSize / 2);
+  lv_obj_set_style_radius(musicUi.playGlow, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(musicUi.playGlow, hex(COL_ACCENT), 0);
+  lv_obj_set_style_bg_opa(musicUi.playGlow, LV_OPA_20, 0);
+
+  musicUi.playBtn = makePlain(musicUi.root);
+  lv_obj_set_size(musicUi.playBtn, playSize, playSize);
+  lv_obj_set_pos(musicUi.playBtn, x, midY - playSize / 2);
+  lv_obj_set_style_radius(musicUi.playBtn, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(musicUi.playBtn, hex(COL_ACCENT), 0);
+  lv_obj_set_style_bg_grad_color(musicUi.playBtn, hex(0x5BDCE9), 0);
+  lv_obj_set_style_bg_grad_dir(musicUi.playBtn, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_bg_opa(musicUi.playBtn, LV_OPA_COVER, 0);
+  lv_obj_set_style_shadow_width(musicUi.playBtn, 40, 0);
+  lv_obj_set_style_shadow_color(musicUi.playBtn, hex(COL_ACCENT), 0);
+  lv_obj_set_style_shadow_opa(musicUi.playBtn, LV_OPA_70, 0);
+  musicUi.playIcon = makeLabel(musicUi.playBtn, LV_SYMBOL_PAUSE,
+                               &lv_font_montserrat_28, 0x062028);
+  lv_obj_center(musicUi.playIcon);
+  x += playSize + gap;
+
+  // Next
+  musicUi.nextBtn = makeMusicSecondaryBtn(musicUi.root, prevNextSize, LV_SYMBOL_NEXT,
+                                          &lv_font_montserrat_24, COL_INK);
+  lv_obj_set_pos(musicUi.nextBtn, x, midY - prevNextSize / 2);
+  x += prevNextSize + gap;
+
+  // Repeat
+  musicUi.repeatBtn = makeMusicSecondaryBtn(musicUi.root, smallSize, LV_SYMBOL_LOOP,
+                                            &lv_font_montserrat_18, COL_INK_2);
+  lv_obj_set_pos(musicUi.repeatBtn, x, midY - smallSize / 2);
+}
+
+void updateMusicProgress() {
+  if (!musicUi.progressFill || !musicUi.progressKnob) return;
+  const MusicTrack &t = musicCurrentTrack();
+  const int duration = t.durationSec > 0 ? t.durationSec : 1;
+  if (musicElapsedSec > duration) musicElapsedSec = duration;
+  if (musicElapsedSec < 0) musicElapsedSec = 0;
+
+  const int rail = musicUi.progressRailWidth;
+  const int fillW = (int)((long)musicElapsedSec * rail / duration);
+  lv_obj_set_width(musicUi.progressFill, fillW < 2 ? 2 : fillW);
+  lv_obj_set_x(musicUi.progressKnob, fillW - 6);
+  if (musicUi.progressKnobHalo) lv_obj_set_x(musicUi.progressKnobHalo, fillW - 10);
+
+  lv_label_set_text(musicUi.timeElapsed, musicFormatTime(musicElapsedSec).c_str());
+  lv_label_set_text(musicUi.timeTotal,   musicFormatTime(duration).c_str());
+}
+
+void updateMusicTrackUi() {
+  const MusicTrack &t = musicCurrentTrack();
+  if (musicUi.title)       lv_label_set_text(musicUi.title, t.title);
+  if (musicUi.artistAlbum) {
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%s \xC2\xB7 %s", t.artist, t.album);
+    lv_label_set_text(musicUi.artistAlbum, buf);
+  }
+  if (musicUi.albumCounter) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "TRACK %02d \xC2\xB7 OF %02d",
+             musicTrackIndex + 1, kMusicTrackCount);
+    lv_label_set_text(musicUi.albumCounter, buf);
+  }
+  // The album art stays the same teal→purple radial backdrop across tracks
+  // (matching the reference), so we no longer recolor the tile per-track.
+  updateMusicProgress();
+}
+
+void updateMusicPlayIcon() {
+  if (!musicUi.playIcon) return;
+  lv_label_set_text(musicUi.playIcon, musicIsPlaying ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+}
+
+void musicTogglePlay() {
+  musicIsPlaying = !musicIsPlaying;
+  musicLastTickMs = millis();
+  updateMusicPlayIcon();
+}
+
+void musicNextTrack() {
+  musicTrackIndex = (musicTrackIndex + 1) % kMusicTrackCount;
+  musicElapsedSec = 0;
+  musicLastTickMs = millis();
+  updateMusicTrackUi();
+}
+
+void musicPrevTrack() {
+  // If we're past the first few seconds, a "prev" first restarts the current
+  // track (matches typical music-app behavior) before stepping back.
+  if (musicElapsedSec > 3) {
+    musicElapsedSec = 0;
+  } else {
+    musicTrackIndex = (musicTrackIndex - 1 + kMusicTrackCount) % kMusicTrackCount;
+    musicElapsedSec = 0;
+    updateMusicTrackUi();
+  }
+  musicLastTickMs = millis();
+  updateMusicProgress();
+}
+
+// ---------------------------------------------------------------------------
 // Screen switching
 // ---------------------------------------------------------------------------
 void animX(lv_obj_t *obj, int from, int to) {
@@ -997,6 +1421,7 @@ lv_obj_t *rootForScreen(ScreenIndex s) {
     case ScreenIndex::Clock: return clockUi.root;
     case ScreenIndex::Weather: return weatherUi.root;
     case ScreenIndex::Portrait: return portraitUi.root;
+    case ScreenIndex::Music: return musicUi.root;
     default: return clockUi.root;
   }
 }
@@ -1006,6 +1431,7 @@ const char *screenName(ScreenIndex s) {
     case ScreenIndex::Clock: return "clock";
     case ScreenIndex::Weather: return "weather";
     case ScreenIndex::Portrait: return "port";
+    case ScreenIndex::Music: return "music";
     default: return "clock";
   }
 }
@@ -1049,7 +1475,7 @@ void showScreen(ScreenIndex s, int direction = 0) {
 
   // Hide the previously-outgoing screen's stale positions from earlier
   // toggles, other than the one we're animating right now.
-  lv_obj_t *roots[] = {clockUi.root, weatherUi.root, portraitUi.root};
+  lv_obj_t *roots[] = {clockUi.root, weatherUi.root, portraitUi.root, musicUi.root};
   for (lv_obj_t *other : roots) {
     if (other && other != incoming && other != outgoing) {
       lv_obj_add_flag(other, LV_OBJ_FLAG_HIDDEN);
@@ -1058,7 +1484,13 @@ void showScreen(ScreenIndex s, int direction = 0) {
   }
 
   refreshPageDots();
-  lv_obj_move_foreground(lv_obj_get_parent(pageDotClock));
+  // Hide the carousel pill on Music (it's not part of the swipe rotation).
+  lv_obj_t *pillParent = lv_obj_get_parent(pageDotClock);
+  if (pillParent) {
+    if (s == ScreenIndex::Music) lv_obj_add_flag(pillParent, LV_OBJ_FLAG_HIDDEN);
+    else                          lv_obj_clear_flag(pillParent, LV_OBJ_FLAG_HIDDEN);
+  }
+  lv_obj_move_foreground(pillParent);
   lv_obj_invalidate(lv_scr_act());
   lastAutoRotate = millis();
 }
@@ -1665,9 +2097,49 @@ void handleSerialCommands() {
       if (cmd == "clock" || cmd == "c") { showScreen(ScreenIndex::Clock); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "weather" || cmd == "w") { showScreen(ScreenIndex::Weather); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "port") { showScreen(ScreenIndex::Portrait); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "music" || cmd == "m") { showScreen(ScreenIndex::Music); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "toggle" || cmd == "t") { toggleScreen(); Serial.println(screenName(currentScreen)); return; }
-      if (cmd == "right" || cmd == ">") { swipeScreen(+1); Serial.println(screenName(currentScreen)); return; }
-      if (cmd == "left"  || cmd == "<") { swipeScreen(-1); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "up" || cmd == "^") {
+        // "up" is the gesture that lifts you from the Clock dashboard into the
+        // music player. From anywhere else it's a no-op today.
+        if (currentScreen == ScreenIndex::Clock) {
+          showScreen(ScreenIndex::Music);
+        }
+        Serial.println(screenName(currentScreen));
+        return;
+      }
+      if (cmd == "down" || cmd == "v") {
+        // On Music, "down" is the play/pause toggle. Elsewhere it returns to Clock.
+        if (currentScreen == ScreenIndex::Music) {
+          musicTogglePlay();
+          Serial.println(musicIsPlaying ? "play" : "pause");
+        } else {
+          showScreen(ScreenIndex::Clock);
+          Serial.println(screenName(currentScreen));
+        }
+        return;
+      }
+      if (cmd == "right" || cmd == ">") {
+        // On Music, "right" advances to the next track. Elsewhere it swipes.
+        if (currentScreen == ScreenIndex::Music) {
+          musicNextTrack();
+          Serial.println("next");
+        } else {
+          swipeScreen(+1);
+          Serial.println(screenName(currentScreen));
+        }
+        return;
+      }
+      if (cmd == "left"  || cmd == "<") {
+        if (currentScreen == ScreenIndex::Music) {
+          musicPrevTrack();
+          Serial.println("prev");
+        } else {
+          swipeScreen(-1);
+          Serial.println(screenName(currentScreen));
+        }
+        return;
+      }
       if (cmd == "refresh" || cmd == "r") { fetchWeather(); Serial.println("refreshed"); return; }
       if (cmd.length() >= 2 && cmd[0] == 'd') {
         const String v = cmd.substring(1);
@@ -1680,7 +2152,7 @@ void handleSerialCommands() {
         Serial.println("use d<0-255>"); return;
       }
       if (cmd == "help" || cmd == "?") {
-        Serial.println("commands: clock|c, weather|w, port, toggle|t, left|<, right|>, refresh|r, d<0-255>, show <name>, hide, help|?");
+        Serial.println("commands: clock|c, weather|w, port, music|m, toggle|t, up|^, down|v, left|<, right|>, refresh|r, d<0-255>, show <name>, hide, help|?");
         return;
       }
       Serial.printf("unknown: %s\n", cmd.c_str());
@@ -1776,6 +2248,63 @@ void tickAutoRotate() {
   }
 }
 
+void tickMusic() {
+  const unsigned long now = millis();
+
+  // Advance playback once per second when playing.
+  if (musicIsPlaying) {
+    if (now - musicLastTickMs >= 1000UL) {
+      const unsigned long stepSec = (now - musicLastTickMs) / 1000UL;
+      musicLastTickMs += stepSec * 1000UL;
+      musicElapsedSec += (int)stepSec;
+      const int duration = musicCurrentTrack().durationSec;
+      if (musicElapsedSec >= duration) {
+        musicTrackIndex = (musicTrackIndex + 1) % kMusicTrackCount;
+        musicElapsedSec = 0;
+        if (currentScreen == ScreenIndex::Music) updateMusicTrackUi();
+      }
+      if (currentScreen == ScreenIndex::Music) updateMusicProgress();
+    }
+  } else {
+    // Keep the baseline current so the next "play" doesn't instantly jump.
+    musicLastTickMs = now;
+  }
+
+  // Animate the colorful soundbars. Only touch LVGL objects when the Music
+  // screen is the active surface — no point repainting while hidden.
+  if (currentScreen != ScreenIndex::Music) return;
+  if (!musicUi.soundbars[0]) return;
+  if (now - musicLastBarAnimMs < 80UL) return;
+  musicLastBarAnimMs = now;
+
+  const int baseY = musicUi.soundbarBaseY;
+  const int maxH = musicUi.soundbarHeight;
+  const int minH = 10;
+
+  for (int i = 0; i < kMusicSoundbarCount; ++i) {
+    int h;
+    if (musicIsPlaying) {
+      // Pseudo-random oscillation using a per-bar phase advanced each tick.
+      // Three detuned sinusoids summed → a lively bouncing pattern without
+      // needing real audio data.
+      musicSoundbarPhase[i] += (uint8_t)(17 + (i * 5));
+      const uint8_t p = musicSoundbarPhase[i];
+      const int s1 = (int)lv_trigo_sin((int16_t)(p * 360 / 256));
+      const int s2 = (int)lv_trigo_sin((int16_t)((p * 2 + i * 40) * 360 / 256));
+      const int s3 = (int)lv_trigo_sin((int16_t)((p / 2 + i * 90) * 360 / 256));
+      // lv_trigo_sin returns a value in [-32767, 32767]. Normalize to [0, 1000].
+      const int mix = (s1 + s2 + s3) / 3;                 // [-32767, 32767]
+      const int norm = (mix + 32768) * 1000 / 65536;      // [0, 1000]
+      h = minH + (maxH - minH) * norm / 1000;
+    } else {
+      // Settle to a quiet floor when paused.
+      h = minH + 4 + (i % 3) * 2;
+    }
+    lv_obj_set_height(musicUi.soundbars[i], h);
+    lv_obj_set_y(musicUi.soundbars[i], baseY - h);
+  }
+}
+
 unsigned long lastLinkRefresh = 0;
 
 void tickLinkState() {
@@ -1790,6 +2319,7 @@ void tickLinkState() {
   setStatusRowState(clockUi.status, link);
   setStatusRowState(weatherUi.status, link);
   setStatusRowState(portraitUi.status, link);
+  setStatusRowState(musicUi.status, link);
 
   const char *leftLabel = (link == LinkState::Online)  ? "CONNECTED"
                         : (link == LinkState::Offline) ? "OFFLINE"
@@ -1797,6 +2327,8 @@ void tickLinkState() {
   lv_label_set_text(clockUi.status.connected,   leftLabel);
   lv_label_set_text(weatherUi.status.connected, leftLabel);
   lv_label_set_text(portraitUi.status.connected, leftLabel);
+  // Music screen keeps its "NOW PLAYING · SPOTIFY" label unchanged — the
+  // accent dot + right-hand info already cover link state for that screen.
 
   // Redraw the glance + weather panels so their labels track link state.
   updateGlanceTile();
@@ -1825,10 +2357,17 @@ void setup() {
   buildClockScreen(scr);
   buildWeatherScreen(scr);
   buildPortraitClockScreen(scr);
+  buildMusicScreen(scr);
   buildPageDots(scr);
   showScreen(ScreenIndex::Clock, 0);
   refreshPageDots();
   showStartupIconPreview(scr);
+
+  updateMusicTrackUi();
+  updateMusicPlayIcon();
+  updateMusicProgress();
+  musicLastTickMs = millis();
+  musicLastBarAnimMs = millis();
 
   lastClockTick = millis();
   lastWeatherAttempt = millis() - WEATHER_REFRESH_MS;
@@ -1840,7 +2379,7 @@ void setup() {
   updateWeatherUi();
   updatePortraitClockUi();
 
-  Serial.println("UI ready. Commands: clock|c, weather|w, port, toggle|t, left|<, right|>, refresh|r, d<0-255>, show <name>, hide, help");
+  Serial.println("UI ready. Commands: clock|c, weather|w, port, music|m, toggle|t, up|^, down|v, left|<, right|>, refresh|r, d<0-255>, show <name>, hide, help");
   fetchWeather();
 }
 
@@ -1850,6 +2389,7 @@ void loop() {
   tickClock();
   tickColonBlink();
   tickAutoRotate();
+  tickMusic();
   tickLinkState();
 
   if ((WiFi.status() != WL_CONNECTED && (now - lastWeatherAttempt) >= WIFI_RETRY_MS) ||
