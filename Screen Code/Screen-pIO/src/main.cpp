@@ -545,7 +545,7 @@ void buildClockScreen(lv_obj_t *parent) {
   // Anchor the hero block to the left side of the screen so the PM/AM
   // superscript and top-right weather glance have clear breathing room.
   const int kHeroLeft = 40;
-  const int kHeroY = 110;
+  const int kHeroY = 140;
 
   auto styleHero = [](lv_obj_t *l, int w, int h) {
     lv_obj_set_size(l, w, h);
@@ -901,18 +901,18 @@ void buildPortraitClockScreen(lv_obj_t *parent) {
 
   portraitUi.hh = makeLabel(stage, "10", &lv_font_montserrat_48, COL_INK);
   stylePortraitHero(portraitUi.hh, 120, 70);
-  lv_obj_align(portraitUi.hh, LV_ALIGN_TOP_MID, -72, 108);
+  lv_obj_align(portraitUi.hh, LV_ALIGN_TOP_MID, -72, 122);
 
   portraitUi.colon = makeLabel(stage, ":", &lv_font_montserrat_48, COL_ACCENT);
   stylePortraitHero(portraitUi.colon, 24, 70);
-  lv_obj_align(portraitUi.colon, LV_ALIGN_TOP_MID, 0, 108);
+  lv_obj_align(portraitUi.colon, LV_ALIGN_TOP_MID, 0, 122);
 
   portraitUi.mm = makeLabel(stage, "42", &lv_font_montserrat_48, COL_INK);
   stylePortraitHero(portraitUi.mm, 120, 70);
-  lv_obj_align(portraitUi.mm, LV_ALIGN_TOP_MID, 72, 108);
+  lv_obj_align(portraitUi.mm, LV_ALIGN_TOP_MID, 72, 122);
 
   portraitUi.ampm = makeLabel(stage, "AM", &lv_font_montserrat_18, COL_INK_3);
-  lv_obj_align(portraitUi.ampm, LV_ALIGN_TOP_MID, 110, 152);
+  lv_obj_align(portraitUi.ampm, LV_ALIGN_TOP_MID, 110, 166);
 
   lv_obj_t *weatherCard = makeGlass(stage, 336, 112, 16);
   lv_obj_align(weatherCard, LV_ALIGN_TOP_MID, 0, 246);
