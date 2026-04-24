@@ -1640,7 +1640,11 @@ void tickColonBlink() {
   else if (currentScreen == ScreenIndex::Portrait) activeColon = portraitUi.colon;
 
   if (activeColon) {
-    lv_label_set_text(activeColon, colonVisible ? ":" : " ");
+    // Toggle visibility instead of swapping text. The custom hero font only
+    // contains 0-9 and ':', so asking it to render a space would fall back
+    // to LVGL's placeholder outline rectangle.
+    if (colonVisible) lv_obj_clear_flag(activeColon, LV_OBJ_FLAG_HIDDEN);
+    else              lv_obj_add_flag(activeColon, LV_OBJ_FLAG_HIDDEN);
     lv_obj_invalidate(activeColon);
   }
 }
