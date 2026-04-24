@@ -194,7 +194,7 @@ struct WeatherUi {
   lv_obj_t *daylightText = nullptr;
   lv_obj_t *updated = nullptr;
 } weatherUi;
-lv_color_t condIconBuf[56 * 56];
+lv_color_t condIconBuf[144 * 144];
 
 // ---------------------------------------------------------------------------
 // State
@@ -521,16 +521,14 @@ void buildClockScreen(lv_obj_t *parent) {
   lv_obj_set_style_bg_opa(sepL, LV_OPA_50, 0);
   lv_obj_align(sepL, LV_ALIGN_CENTER, 0, 0);
 
-  // Hero numerals: scaled from Montserrat 48 via transform_zoom for a ~105pt
-  // feel. 256 = 1x, 560 ~= 2.19x. Labels must be sized to contain the scaled
-  // glyphs, because transform_zoom only affects rendering — the label's own
-  // bounding box stays at its unscaled size and clips the draw otherwise.
-  constexpr int kHeroY = 130;
-  const int kHeroLeft = 122;
-  const int kDigitPairW = 110;
-  const int kDigitH = 66;
-  const int kColonW = 24;
-  const int kGap = 8;
+  // Fill the open band between the date strip and the now-playing card while
+  // leaving the right-side weather glance untouched.
+  constexpr int kHeroY = 118;
+  const int kHeroLeft = 44;
+  const int kDigitPairW = 170;
+  const int kDigitH = 86;
+  const int kColonW = 34;
+  const int kGap = 12;
 
   auto styleHero = [](lv_obj_t *l, int w, int h) {
     lv_obj_set_size(l, w, h);
@@ -551,8 +549,10 @@ void buildClockScreen(lv_obj_t *parent) {
   lv_obj_set_pos(clockUi.mm, kHeroLeft + kDigitPairW + kColonW + kGap * 2, kHeroY);
 
   clockUi.ampm = makeLabel(clockUi.root, "AM", &lv_font_montserrat_18, COL_INK_3);
+  lv_obj_set_style_text_font(clockUi.ampm, &lv_font_montserrat_28, 0);
+  lv_obj_set_size(clockUi.ampm, 64, 34);
   lv_obj_set_pos(clockUi.ampm,
-                 kHeroLeft + kDigitPairW + kColonW + kDigitPairW + kGap * 2 + 12,
+                 kHeroLeft + kDigitPairW + kColonW + kDigitPairW + kGap * 2 + 8,
                  kHeroY + 36);
 
   // Right-side "glance" weather
@@ -663,6 +663,9 @@ void buildWeatherScreen(lv_obj_t *parent) {
   weatherUi.coordLabel = makeLabel(hero, "", &lv_font_montserrat_12, COL_INK_3);
   lv_obj_align(weatherUi.coordLabel, LV_ALIGN_TOP_RIGHT, -22, 18);
 
+  constexpr int kWeatherHeroIconSize = 144;
+  constexpr int kWeatherHeroTextW = 220;
+
   // Big temperature number
   weatherUi.bigTemp = makeLabel(hero, "--\xC2\xB0", &lv_font_montserrat_48, COL_INK);
   lv_obj_set_style_text_letter_space(weatherUi.bigTemp, -2, 0);
@@ -671,14 +674,18 @@ void buildWeatherScreen(lv_obj_t *parent) {
   // Condition icon
   weatherUi.condIconCanvas = lv_canvas_create(hero);
   lv_obj_remove_style_all(weatherUi.condIconCanvas);
-  lv_obj_set_size(weatherUi.condIconCanvas, 56, 56);
-  lv_canvas_set_buffer(weatherUi.condIconCanvas, condIconBuf, 56, 56, LV_IMG_CF_TRUE_COLOR);
-  lv_obj_set_pos(weatherUi.condIconCanvas, heroW - 80, 88);
+  lv_obj_set_size(weatherUi.condIconCanvas, kWeatherHeroIconSize, kWeatherHeroIconSize);
+  lv_canvas_set_buffer(weatherUi.condIconCanvas, condIconBuf,
+                       kWeatherHeroIconSize, kWeatherHeroIconSize, LV_IMG_CF_TRUE_COLOR);
+  lv_obj_set_pos(weatherUi.condIconCanvas, heroW - kWeatherHeroIconSize - 18, 58);
 
   weatherUi.condLabel = makeLabel(hero, "--", &lv_font_montserrat_20, COL_INK);
+  lv_obj_set_width(weatherUi.condLabel, kWeatherHeroTextW);
+  lv_label_set_long_mode(weatherUi.condLabel, LV_LABEL_LONG_WRAP);
   lv_obj_set_pos(weatherUi.condLabel, 22, 160);
 
   weatherUi.feelsLabel = makeLabel(hero, "FEELS LIKE --", &lv_font_montserrat_12, COL_INK_3);
+  lv_obj_set_width(weatherUi.feelsLabel, kWeatherHeroTextW);
   lv_obj_set_pos(weatherUi.feelsLabel, 22, 196);
 
   // Divider line
@@ -1304,7 +1311,7 @@ void updateWeatherUi() {
 
   // Condition icon
   const char *iconCode = weatherData.iconCode.isEmpty() ? "01d" : weatherData.iconCode.c_str();
-  renderIconToBuffer(weatherData.conditionId, iconCode, condIconBuf, 56, 56);
+  renderIconToBuffer(weatherData.conditionId, iconCode, condIconBuf, 144, 144);
   lv_obj_invalidate(weatherUi.condIconCanvas);
 }
 
