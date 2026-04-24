@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <esp_heap_caps.h>
 #include <lvgl.h>
+#include <limits.h>
 #include <math.h>
 #include <string.h>
 #include <time.h>
@@ -36,8 +37,8 @@ constexpr int BACKLIGHT_CHANNEL = 1;
 constexpr int BACKLIGHT_FREQUENCY_HZ = 300;
 constexpr int BACKLIGHT_RESOLUTION_BITS = 8;
 constexpr uint8_t BACKLIGHT_BRIGHTNESS = 255;
-constexpr size_t DRAW_BUFFER_PIXEL_COUNT = SCREEN_WIDTH * 40;
-constexpr uint32_t AUTO_ROTATE_MS = 10000UL;
+constexpr size_t DRAW_BUFFER_PIXEL_COUNT = SCREEN_WIDTH * 80;
+constexpr uint32_t AUTO_ROTATE_MS = 0UL;
 constexpr uint16_t STARTUP_ICON_PREVIEW_SIZE = 32;
 constexpr uint8_t STARTUP_ICON_PREVIEW_COLUMNS = 10;
 
@@ -73,6 +74,7 @@ enum class ScreenIndex : int {
 CrowPanelDisplay display(DISPLAY_MODEL);
 lv_disp_draw_buf_t drawBuffer;
 lv_color_t *drawBufferA = nullptr;
+lv_color_t *drawBufferB = nullptr;
 lv_color_t weatherIconCanvasBuffer[kWeatherIconWidth * kWeatherIconHeight];
 constexpr int kStartupPreviewWeatherIds[] = {
   200, 201, 202, 210, 211, 212, 221, 230, 231, 232,
@@ -194,7 +196,7 @@ struct WeatherUi {
   lv_obj_t *daylightText = nullptr;
   lv_obj_t *updated = nullptr;
 } weatherUi;
-lv_color_t condIconBuf[144 * 144];
+lv_color_t *condIconBuf = nullptr;
 
 // ---------------------------------------------------------------------------
 // State
@@ -209,6 +211,8 @@ String serialCommandBuffer;
 bool colonVisible = true;
 unsigned long lastColonBlink = 0;
 bool ntpConfigured = false;
+long lastRenderedClockMinute = LONG_MIN;
+int lastRenderedLinkState = -1;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1042,6 +1046,10 @@ void swipeScreen(int delta) {
 // ---------------------------------------------------------------------------
 void updateClockFace() {
   const long utcEpoch = clockEpochUtc();
+  const long localEpoch = utcEpoch + weatherData.timezoneOffset;
+  const long localMinute = localEpoch / 60L;
+  if (utcEpoch > 0 && localMinute == lastRenderedClockMinute) return;
+
   const time_t t = static_cast<time_t>(utcEpoch + weatherData.timezoneOffset);
   struct tm tm; gmtime_r(&t, &tm);
 
@@ -1050,6 +1058,7 @@ void updateClockFace() {
   int h12 = h % 12; if (h12 == 0) h12 = 12;
 
   if (utcEpoch > 0) {
+    lastRenderedClockMinute = localMinute;
     lv_label_set_text(clockUi.hh, pad2(h12).c_str());
     lv_label_set_text(clockUi.mm, pad2(tm.tm_min).c_str());
     lv_label_set_text(clockUi.ampm, ampm.c_str());
@@ -1548,9 +1557,25 @@ void handleSerialCommands() {
 // ---------------------------------------------------------------------------
 void initLvgl() {
   lv_init();
+  condIconBuf = static_cast<lv_color_t *>(
+      heap_caps_malloc(144 * 144 * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!condIconBuf) {
+    condIconBuf = static_cast<lv_color_t *>(
+        heap_caps_malloc(144 * 144 * sizeof(lv_color_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  }
+  if (!condIconBuf) {
+    Serial.println("Weather icon buffer alloc failed");
+    while (true) delay(1000);
+  }
+
   drawBufferA = static_cast<lv_color_t *>(
       heap_caps_malloc(DRAW_BUFFER_PIXEL_COUNT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (!drawBufferA) {
+  drawBufferB = static_cast<lv_color_t *>(
+      heap_caps_malloc(DRAW_BUFFER_PIXEL_COUNT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+
+  if (!drawBufferA || !drawBufferB) {
+    if (drawBufferA) { heap_caps_free(drawBufferA); drawBufferA = nullptr; }
+    if (drawBufferB) { heap_caps_free(drawBufferB); drawBufferB = nullptr; }
     drawBufferA = static_cast<lv_color_t *>(
         heap_caps_malloc(DRAW_BUFFER_PIXEL_COUNT * sizeof(lv_color_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   }
@@ -1558,7 +1583,7 @@ void initLvgl() {
     Serial.println("LVGL buffer alloc failed");
     while (true) delay(1000);
   }
-  lv_disp_draw_buf_init(&drawBuffer, drawBufferA, nullptr, DRAW_BUFFER_PIXEL_COUNT);
+  lv_disp_draw_buf_init(&drawBuffer, drawBufferA, drawBufferB, DRAW_BUFFER_PIXEL_COUNT);
 
   static lv_disp_drv_t dispDrv;
   lv_disp_drv_init(&dispDrv);
@@ -1592,12 +1617,18 @@ void tickColonBlink() {
   if (now - lastColonBlink < 600) return;
   lastColonBlink = now;
   colonVisible = !colonVisible;
-  lv_obj_set_style_text_opa(clockUi.colon, colonVisible ? LV_OPA_COVER : LV_OPA_40, 0);
-  lv_obj_set_style_text_opa(portraitUi.colon, colonVisible ? LV_OPA_COVER : LV_OPA_40, 0);
+  lv_obj_t *activeColon = nullptr;
+  if (currentScreen == ScreenIndex::Clock) activeColon = clockUi.colon;
+  else if (currentScreen == ScreenIndex::Portrait) activeColon = portraitUi.colon;
+
+  if (activeColon) {
+    lv_label_set_text(activeColon, colonVisible ? ":" : " ");
+    lv_obj_invalidate(activeColon);
+  }
 }
 
 void tickAutoRotate() {
-  if (millis() - lastAutoRotate >= AUTO_ROTATE_MS) {
+  if (AUTO_ROTATE_MS > 0 && millis() - lastAutoRotate >= AUTO_ROTATE_MS) {
     toggleScreen();
   }
 }
@@ -1610,6 +1641,9 @@ void tickLinkState() {
   lastLinkRefresh = now;
 
   LinkState link = currentLinkState();
+  if (static_cast<int>(link) == lastRenderedLinkState) return;
+  lastRenderedLinkState = static_cast<int>(link);
+
   setStatusRowState(clockUi.status, link);
   setStatusRowState(weatherUi.status, link);
   setStatusRowState(portraitUi.status, link);
@@ -1648,6 +1682,7 @@ void setup() {
   buildWeatherScreen(scr);
   buildPortraitClockScreen(scr);
   buildPageDots(scr);
+  showScreen(ScreenIndex::Clock, 0);
   refreshPageDots();
   showStartupIconPreview(scr);
 
