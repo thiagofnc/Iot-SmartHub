@@ -16,6 +16,11 @@
 #include "CrowPanelDisplay.h"
 #include "WeatherIconsAssets.h"
 
+// Custom Montserrat font used for the hero clock digits. Generated with
+// lv_font_conv from Montserrat-Bold at 180px (digits 0-9 + colon only).
+// The C source lives at src/montserrat_hero_180.c.
+extern "C" const lv_font_t montserrat_hero_180;
+
 namespace {
 
 // ---------------------------------------------------------------------------
@@ -525,14 +530,22 @@ void buildClockScreen(lv_obj_t *parent) {
   lv_obj_set_style_bg_opa(sepL, LV_OPA_50, 0);
   lv_obj_align(sepL, LV_ALIGN_CENTER, 0, 0);
 
-  // Fill the open band between the date strip and the now-playing card while
-  // leaving the right-side weather glance untouched.
-  constexpr int kHeroY = 118;
-  const int kHeroLeft = 44;
-  const int kDigitPairW = 170;
-  const int kDigitH = 86;
-  const int kColonW = 34;
-  const int kGap = 12;
+  // Hero clock — huge digits using the custom montserrat_hero_180 font.
+  // A native font renders directly (no transform_zoom, which can't work in
+  // this LVGL build because LV_COLOR_SCREEN_TRANSP is 0, making layer
+  // allocation fail for labels that need alpha compositing).
+  //
+  // Digit glyph width is ~110-115 px at 180 px font size; "08" measures
+  // ~215 px wide, so each two-digit block is given a 240 px slot.
+  constexpr int kDigitBoxW = 240;
+  constexpr int kDigitBoxH = 160;
+  constexpr int kColonBoxW = 40;
+  constexpr int kGap = 6;
+  constexpr int kHeroTotalW = kDigitBoxW + kColonBoxW + kDigitBoxW + kGap * 2;
+  // Anchor the hero block to the left side of the screen so the PM/AM
+  // superscript and top-right weather glance have clear breathing room.
+  const int kHeroLeft = 40;
+  const int kHeroY = 110;
 
   auto styleHero = [](lv_obj_t *l, int w, int h) {
     lv_obj_set_size(l, w, h);
@@ -540,41 +553,46 @@ void buildClockScreen(lv_obj_t *parent) {
     lv_label_set_long_mode(l, LV_LABEL_LONG_CLIP);
   };
 
-  clockUi.hh = makeLabel(clockUi.root, "10", &lv_font_montserrat_48, COL_INK);
-  styleHero(clockUi.hh, kDigitPairW, kDigitH);
+  clockUi.hh = makeLabel(clockUi.root, "10", &montserrat_hero_180, COL_INK);
+  styleHero(clockUi.hh, kDigitBoxW, kDigitBoxH);
   lv_obj_set_pos(clockUi.hh, kHeroLeft, kHeroY);
 
-  clockUi.colon = makeLabel(clockUi.root, ":", &lv_font_montserrat_48, COL_ACCENT);
-  styleHero(clockUi.colon, kColonW, kDigitH);
-  lv_obj_set_pos(clockUi.colon, kHeroLeft + kDigitPairW + kGap, kHeroY);
+  clockUi.colon = makeLabel(clockUi.root, ":", &montserrat_hero_180, COL_ACCENT);
+  styleHero(clockUi.colon, kColonBoxW, kDigitBoxH);
+  lv_obj_set_pos(clockUi.colon, kHeroLeft + kDigitBoxW + kGap, kHeroY);
 
-  clockUi.mm = makeLabel(clockUi.root, "42", &lv_font_montserrat_48, COL_INK);
-  styleHero(clockUi.mm, kDigitPairW, kDigitH);
-  lv_obj_set_pos(clockUi.mm, kHeroLeft + kDigitPairW + kColonW + kGap * 2, kHeroY);
+  clockUi.mm = makeLabel(clockUi.root, "42", &montserrat_hero_180, COL_INK);
+  styleHero(clockUi.mm, kDigitBoxW, kDigitBoxH);
+  lv_obj_set_pos(clockUi.mm, kHeroLeft + kDigitBoxW + kColonBoxW + kGap * 2, kHeroY);
 
-  clockUi.ampm = makeLabel(clockUi.root, "AM", &lv_font_montserrat_18, COL_INK_3);
-  lv_obj_set_style_text_font(clockUi.ampm, &lv_font_montserrat_28, 0);
-  lv_obj_set_size(clockUi.ampm, 64, 34);
+  // PM / AM superscript, sitting near the top-right corner of the minutes.
+  clockUi.ampm = makeLabel(clockUi.root, "AM", &lv_font_montserrat_28, COL_INK_3);
+  lv_obj_set_size(clockUi.ampm, 48, 34);
   lv_obj_set_pos(clockUi.ampm,
-                 kHeroLeft + kDigitPairW + kColonW + kDigitPairW + kGap * 2 + 8,
-                 kHeroY + 36);
+                 kHeroLeft + kHeroTotalW + 6,
+                 kHeroY + 26);
 
-  // Right-side "glance" weather
+  // Weather glance — top-right corner, matching the reference screenshot.
+  // Icon on top-right, temp with degree symbol below, condition + city on
+  // two small lines underneath.
   lv_obj_t *glance = makePlain(clockUi.root);
-  lv_obj_set_size(glance, 200, 160);
-  lv_obj_set_pos(glance, SCREEN_WIDTH - 230, 90);
+  lv_obj_set_size(glance, 150, 200);
+  lv_obj_set_pos(glance, SCREEN_WIDTH - 150 - 24, 90);
 
   clockUi.glanceIconCanvas = lv_canvas_create(glance);
   lv_obj_remove_style_all(clockUi.glanceIconCanvas);
   lv_obj_set_size(clockUi.glanceIconCanvas, 48, 48);
   lv_canvas_set_buffer(clockUi.glanceIconCanvas, glanceIconBuf, 48, 48, LV_IMG_CF_TRUE_COLOR);
-  lv_obj_align(clockUi.glanceIconCanvas, LV_ALIGN_TOP_RIGHT, -6, 0);
+  lv_obj_align(clockUi.glanceIconCanvas, LV_ALIGN_TOP_RIGHT, -4, 0);
 
   clockUi.glanceTemp = makeLabel(glance, "--\xC2\xB0", &lv_font_montserrat_48, COL_INK);
-  lv_obj_align(clockUi.glanceTemp, LV_ALIGN_TOP_RIGHT, 0, 58);
+  lv_obj_align(clockUi.glanceTemp, LV_ALIGN_TOP_RIGHT, 0, 60);
 
   clockUi.glanceCond = makeLabel(glance, "WAITING", &lv_font_montserrat_12, COL_INK_3);
-  lv_obj_align(clockUi.glanceCond, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+  lv_obj_set_style_text_align(clockUi.glanceCond, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_label_set_long_mode(clockUi.glanceCond, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(clockUi.glanceCond, 150);
+  lv_obj_align(clockUi.glanceCond, LV_ALIGN_TOP_RIGHT, 0, 130);
 
   // Now Playing card
   lv_obj_t *np = makeGlass(clockUi.root, SCREEN_WIDTH - 80, 76, 16);
