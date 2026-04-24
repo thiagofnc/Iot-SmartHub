@@ -1059,6 +1059,20 @@ String musicFormatTime(int totalSec) {
   return String(buf);
 }
 
+// Hard character cap for the song title so it never wraps to a second line.
+// 12 visible chars + "..." when truncated, fits Montserrat 42 in the right column.
+constexpr int kMusicTitleMaxChars = 16;
+
+void musicWriteTruncated(char *out, size_t outSize, const char *src, int maxChars) {
+  if (outSize == 0) return;
+  int srcLen = (int)strlen(src);
+  if (srcLen <= maxChars) {
+    snprintf(out, outSize, "%s", src);
+    return;
+  }
+  snprintf(out, outSize, "%.*s...", maxChars, src);
+}
+
 const MusicTrack &musicCurrentTrack() {
   return kMusicTracks[musicTrackIndex];
 }
@@ -1168,33 +1182,33 @@ void buildMusicScreen(lv_obj_t *parent) {
   lv_obj_set_style_text_letter_space(eyebrow, 2, 0);
   lv_obj_set_pos(eyebrow, rightX + 28, eyebrowY);
 
-  // Title — big and bold. Montserrat 42 fits "Resonance — Extended Mix" in
-  // the right-column width at 800×480 without clipping; longer titles wrap
-  // to a second line. Uses an em-dash matching the reference screenshot.
-  musicUi.title = makeLabel(musicUi.root, kMusicTracks[0].title,
+  // Title — big and bold. Hard-capped at 12 chars + "..." so it never wraps
+  // and the artist line below always sits at a fixed offset.
+  char titleBuf[32];
+  musicWriteTruncated(titleBuf, sizeof(titleBuf), kMusicTracks[0].title,
+                      kMusicTitleMaxChars);
+  musicUi.title = makeLabel(musicUi.root, titleBuf,
                             &lv_font_montserrat_42, COL_INK);
-  lv_obj_set_width(musicUi.title, rightW);
-  lv_label_set_long_mode(musicUi.title, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_letter_space(musicUi.title, -1, 0);
   lv_obj_set_pos(musicUi.title, rightX, eyebrowY + 24);
 
-  // Secondary line — "ARTIST · ALBUM" using a middle-dot separator.
+  // Secondary line — "ARTIST | ALBUM". Uses a plain pipe separator because
+  // the fonts baked into this build don't render the middle-dot glyph.
   char artistAlbumBuf[96];
-  snprintf(artistAlbumBuf, sizeof(artistAlbumBuf), "%s \xC2\xB7 %s",
+  snprintf(artistAlbumBuf, sizeof(artistAlbumBuf), "%s | %s",
            kMusicTracks[0].artist, kMusicTracks[0].album);
   musicUi.artistAlbum = makeLabel(musicUi.root, artistAlbumBuf,
                                   &lv_font_montserrat_18, COL_INK_2);
   lv_obj_set_width(musicUi.artistAlbum, rightW);
   lv_label_set_long_mode(musicUi.artistAlbum, LV_LABEL_LONG_DOT);
-  // Title is Montserrat 42 and may wrap to two lines (~50 px line height),
-  // so the artist line needs to clear 2 wrapped lines below the title start.
-  lv_obj_set_pos(musicUi.artistAlbum, rightX, eyebrowY + 130);
+  // Sits just under the single-line title.
+  lv_obj_set_pos(musicUi.artistAlbum, rightX, eyebrowY + 78);
 
   // ---------------- Soundbars (between title and progress) ----------------
   const int barsAreaX = rightX;
   const int barsAreaW = rightW;
-  const int barsTop = eyebrowY + 168;
-  const int barsBottomY = barsTop + 90;
+  const int barsTop = eyebrowY + 120;
+  const int barsBottomY = barsTop + 110;
   const int barsH = barsBottomY - barsTop;
   const int barW = 18;
   const int barGap = (barsAreaW - barW * kMusicSoundbarCount) / (kMusicSoundbarCount - 1);
@@ -1208,7 +1222,23 @@ void buildMusicScreen(lv_obj_t *parent) {
     lv_obj_set_size(bar, barW, h);
     lv_obj_set_pos(bar, barsAreaX + i * (barW + barGap), barsBottomY - h);
     lv_obj_set_style_radius(bar, 4, 0);
-    const uint32_t color = kSoundbarPalette[i % kSoundbarPaletteCount];
+    // Each bar is a single solid color stepped along the row — together the
+    // bars form a left-to-right gradient across the whole soundbar strip
+    // (rather than each bar carrying its own internal gradient).
+    const uint32_t leftEnd  = 0x5BDCE9;  // cyan
+    const uint32_t rightEnd = 0xB06BFF;  // purple
+    const uint8_t lr = (leftEnd  >> 16) & 0xFF;
+    const uint8_t lg = (leftEnd  >>  8) & 0xFF;
+    const uint8_t lb =  leftEnd          & 0xFF;
+    const uint8_t rr = (rightEnd >> 16) & 0xFF;
+    const uint8_t rg = (rightEnd >>  8) & 0xFF;
+    const uint8_t rb =  rightEnd         & 0xFF;
+    const int t = (kMusicSoundbarCount == 1) ? 0
+                    : i * 1000 / (kMusicSoundbarCount - 1);  // 0..1000
+    const uint8_t cr = (uint8_t)(lr + (rr - (int)lr) * t / 1000);
+    const uint8_t cg = (uint8_t)(lg + (rg - (int)lg) * t / 1000);
+    const uint8_t cb = (uint8_t)(lb + (rb - (int)lb) * t / 1000);
+    const uint32_t color = ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
     lv_obj_set_style_bg_color(bar, hex(color), 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     // Slight halo so the bars bloom on the dark backdrop.
@@ -1351,10 +1381,14 @@ void updateMusicProgress() {
 
 void updateMusicTrackUi() {
   const MusicTrack &t = musicCurrentTrack();
-  if (musicUi.title)       lv_label_set_text(musicUi.title, t.title);
+  if (musicUi.title) {
+    char buf[32];
+    musicWriteTruncated(buf, sizeof(buf), t.title, kMusicTitleMaxChars);
+    lv_label_set_text(musicUi.title, buf);
+  }
   if (musicUi.artistAlbum) {
     char buf[96];
-    snprintf(buf, sizeof(buf), "%s \xC2\xB7 %s", t.artist, t.album);
+    snprintf(buf, sizeof(buf), "%s | %s", t.artist, t.album);
     lv_label_set_text(musicUi.artistAlbum, buf);
   }
   if (musicUi.albumCounter) {
