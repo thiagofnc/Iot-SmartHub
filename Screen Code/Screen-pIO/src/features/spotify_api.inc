@@ -117,6 +117,7 @@ bool spotifyJpgOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bi
 
 void spotifyShowFallbackCover() {
   if (musicUi.albumCanvas) lv_obj_add_flag(musicUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
+  if (musicPortraitUi.albumCanvas) lv_obj_add_flag(musicPortraitUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
 }
 
 bool spotifyLoadAlbumCover(const String &imageUrl) {
@@ -198,6 +199,11 @@ bool spotifyLoadAlbumCover(const String &imageUrl) {
     lv_canvas_set_buffer(musicUi.albumCanvas, spotifyCoverBuffer,
                          kSpotifyCoverSize, kSpotifyCoverSize, LV_IMG_CF_TRUE_COLOR);
     lv_obj_clear_flag(musicUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (musicPortraitUi.albumCanvas) {
+    lv_canvas_set_buffer(musicPortraitUi.albumCanvas, spotifyCoverBuffer,
+                         kSpotifyCoverSize, kSpotifyCoverSize, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_clear_flag(musicPortraitUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
   }
   spotify.coverLoadedUrl = imageUrl;
   return true;

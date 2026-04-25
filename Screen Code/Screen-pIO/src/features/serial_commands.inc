@@ -24,6 +24,12 @@ void handleSerialCommands() {
       if (cmd == "weather" || cmd == "w") { showScreen(ScreenIndex::Weather); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "port") { showScreen(ScreenIndex::Portrait); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "music" || cmd == "m") { showScreen(ScreenIndex::Music); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "rotate") {
+        if (currentScreen == ScreenIndex::Music) showScreen(ScreenIndex::MusicPortrait);
+        else if (currentScreen == ScreenIndex::MusicPortrait) showScreen(ScreenIndex::Music);
+        Serial.println(screenName(currentScreen));
+        return;
+      }
       if (cmd == "toggle" || cmd == "t") { toggleScreen(); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "up" || cmd == "^") {
         // "up" is the gesture that lifts you from the Clock dashboard into the
@@ -36,7 +42,7 @@ void handleSerialCommands() {
       }
       if (cmd == "down" || cmd == "v") {
         // On Music, "down" is the play/pause toggle. Elsewhere it returns to Clock.
-        if (currentScreen == ScreenIndex::Music) {
+        if (isMusicScreen(currentScreen)) {
           musicTogglePlay();
           Serial.println(musicCurrentlyPlaying() ? "play" : "pause");
         } else {
@@ -47,7 +53,7 @@ void handleSerialCommands() {
       }
       if (cmd == "right" || cmd == ">") {
         // On Music, "right" advances to the next track. Elsewhere it swipes.
-        if (currentScreen == ScreenIndex::Music) {
+        if (isMusicScreen(currentScreen)) {
           musicNextTrack();
           Serial.println("next");
         } else {
@@ -57,7 +63,7 @@ void handleSerialCommands() {
         return;
       }
       if (cmd == "left"  || cmd == "<") {
-        if (currentScreen == ScreenIndex::Music) {
+        if (isMusicScreen(currentScreen)) {
           musicPrevTrack();
           Serial.println("prev");
         } else {
@@ -83,7 +89,7 @@ void handleSerialCommands() {
         Serial.println("use d<0-255>"); return;
       }
       if (cmd == "help" || cmd == "?") {
-        Serial.println("commands: clock|c, weather|w, port, music|m, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, d<0-255>, show <name>, hide, help|?");
+        Serial.println("commands: clock|c, weather|w, port, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, d<0-255>, show <name>, hide, help|?");
         return;
       }
       Serial.printf("unknown: %s\n", cmd.c_str());
@@ -98,7 +104,7 @@ void tickSpotify() {
   if (!spotifyConfigured()) return;
   const unsigned long now = millis();
   if (now - spotify.lastFetchMs < SPOTIFY_REFRESH_MS) {
-    if (spotify.valid && currentScreen == ScreenIndex::Music) updateMusicProgress();
+    if (spotify.valid && isMusicScreen(currentScreen)) updateMusicProgress();
     return;
   }
   fetchSpotifyPlayback();

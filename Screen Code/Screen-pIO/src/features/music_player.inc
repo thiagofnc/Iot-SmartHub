@@ -91,18 +91,45 @@ lv_obj_t *makeMusicSecondaryBtn(lv_obj_t *parent, int size, const char *symbol,
   return b;
 }
 
+bool isMusicScreen(ScreenIndex s) {
+  return s == ScreenIndex::Music || s == ScreenIndex::MusicPortrait;
+}
+
+MusicUi &activeMusicUi() {
+  return currentScreen == ScreenIndex::MusicPortrait ? musicPortraitUi : musicUi;
+}
+
+uint32_t musicSoundbarColor(int index) {
+  const uint32_t leftEnd  = 0x35F3FF;  // electric cyan
+  const uint32_t midPoint = 0x58F28A;  // vivid mint
+  const uint32_t rightEnd = 0xB86BFF;  // bright violet
+  const int t = (kMusicSoundbarCount == 1) ? 0
+                  : index * 1000 / (kMusicSoundbarCount - 1);  // 0..1000
+  const uint32_t from = (t <= 500) ? leftEnd : midPoint;
+  const uint32_t to = (t <= 500) ? midPoint : rightEnd;
+  const int localT = (t <= 500) ? t * 2 : (t - 500) * 2;
+  const uint8_t fr = (from >> 16) & 0xFF;
+  const uint8_t fg = (from >>  8) & 0xFF;
+  const uint8_t fb =  from        & 0xFF;
+  const uint8_t tr = (to >> 16) & 0xFF;
+  const uint8_t tg = (to >>  8) & 0xFF;
+  const uint8_t tb =  to        & 0xFF;
+  const uint8_t cr = (uint8_t)(fr + (tr - (int)fr) * localT / 1000);
+  const uint8_t cg = (uint8_t)(fg + (tg - (int)fg) * localT / 1000);
+  const uint8_t cb = (uint8_t)(fb + (tb - (int)fb) * localT / 1000);
+  return ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
+}
+
 void buildMusicScreen(lv_obj_t *parent) {
   musicUi.root = makePlain(parent);
   lv_obj_set_size(musicUi.root, SCREEN_WIDTH, SCREEN_HEIGHT);
   lv_obj_set_pos(musicUi.root, 0, 0);
   lv_obj_add_flag(musicUi.root, LV_OBJ_FLAG_HIDDEN);
 
-  // Backdrop — very dark teal/navy, slightly lighter toward the right to
-  // match the reference. A single subtle horizontal gradient does the job;
-  // no ambient blobs, which kept the reference looking clean.
+  // Backdrop: solid deep navy so the album art, controls, and soundbars carry
+  // the visual energy without a page-level gradient.
   lv_obj_set_style_bg_color(musicUi.root, hex(0x060A12), 0);
-  lv_obj_set_style_bg_grad_color(musicUi.root, hex(0x10172A), 0);
-  lv_obj_set_style_bg_grad_dir(musicUi.root, LV_GRAD_DIR_HOR, 0);
+  lv_obj_set_style_bg_grad_dir(musicUi.root, LV_GRAD_DIR_NONE, 0);
   lv_obj_set_style_bg_opa(musicUi.root, LV_OPA_COVER, 0);
 
   // Status strip — left: accent dot + "NOW PLAYING · SPOTIFY"; right: room + battery.
@@ -231,20 +258,7 @@ void buildMusicScreen(lv_obj_t *parent) {
     // Each bar is a single solid color stepped along the row — together the
     // bars form a left-to-right gradient across the whole soundbar strip
     // (rather than each bar carrying its own internal gradient).
-    const uint32_t leftEnd  = 0x5BDCE9;  // cyan
-    const uint32_t rightEnd = 0xB06BFF;  // purple
-    const uint8_t lr = (leftEnd  >> 16) & 0xFF;
-    const uint8_t lg = (leftEnd  >>  8) & 0xFF;
-    const uint8_t lb =  leftEnd          & 0xFF;
-    const uint8_t rr = (rightEnd >> 16) & 0xFF;
-    const uint8_t rg = (rightEnd >>  8) & 0xFF;
-    const uint8_t rb =  rightEnd         & 0xFF;
-    const int t = (kMusicSoundbarCount == 1) ? 0
-                    : i * 1000 / (kMusicSoundbarCount - 1);  // 0..1000
-    const uint8_t cr = (uint8_t)(lr + (rr - (int)lr) * t / 1000);
-    const uint8_t cg = (uint8_t)(lg + (rg - (int)lg) * t / 1000);
-    const uint8_t cb = (uint8_t)(lb + (rb - (int)lb) * t / 1000);
-    const uint32_t color = ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
+    const uint32_t color = musicSoundbarColor(i);
     lv_obj_set_style_bg_color(bar, hex(color), 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     // Slight halo so the bars bloom on the dark backdrop.
@@ -312,7 +326,7 @@ void buildMusicScreen(lv_obj_t *parent) {
   const int playSize = 66;
   const int gap = 18;
 
-  const int ctrlY = contentBottom - playSize - 2;
+  const int ctrlY = contentBottom - playSize - 18;
   const int ctrlGroupW = smallSize + gap + prevNextSize + gap + playSize + gap + prevNextSize + gap + smallSize;
   const int ctrlX = rightX + (rightW - ctrlGroupW) / 2;
   const int midY = ctrlY + playSize / 2;
@@ -368,50 +382,289 @@ void buildMusicScreen(lv_obj_t *parent) {
   lv_obj_set_pos(musicUi.repeatBtn, x, midY - smallSize / 2);
 }
 
-void updateMusicProgress() {
-  if (!musicUi.progressFill || !musicUi.progressKnob) return;
+void buildMusicPortraitScreen(lv_obj_t *parent) {
+  musicPortraitUi.root = makePlain(parent);
+  lv_obj_set_size(musicPortraitUi.root, PORTRAIT_WIDTH, PORTRAIT_HEIGHT);
+  lv_obj_set_pos(musicPortraitUi.root, 0, 0);
+  lv_obj_add_flag(musicPortraitUi.root, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_style_bg_color(musicPortraitUi.root, hex(0x060A12), 0);
+  lv_obj_set_style_bg_grad_dir(musicPortraitUi.root, LV_GRAD_DIR_NONE, 0);
+  lv_obj_set_style_bg_opa(musicPortraitUi.root, LV_OPA_COVER, 0);
+
+  buildStatusRow(musicPortraitUi.root, musicPortraitUi.status,
+                 "NOW PLAYING \xC2\xB7 SPOTIFY", "LIVING ROOM \xC2\xB7 68%");
+
+  const int screenW = PORTRAIT_WIDTH;
+  const int albumSize = 360;
+  const int albumX = (screenW - albumSize) / 2;
+  const int albumY = 52;
+
+  musicPortraitUi.album = makePlain(musicPortraitUi.root);
+  lv_obj_set_size(musicPortraitUi.album, albumSize, albumSize);
+  lv_obj_set_pos(musicPortraitUi.album, albumX, albumY);
+  lv_obj_set_style_radius(musicPortraitUi.album, 22, 0);
+  lv_obj_set_style_bg_color(musicPortraitUi.album, hex(0x3B2656), 0);
+  lv_obj_set_style_bg_grad_color(musicPortraitUi.album, hex(0x1B1430), 0);
+  lv_obj_set_style_bg_grad_dir(musicPortraitUi.album, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_bg_opa(musicPortraitUi.album, LV_OPA_COVER, 0);
+  lv_obj_set_style_clip_corner(musicPortraitUi.album, true, 0);
+
+  musicPortraitUi.albumGlowA = makePlain(musicPortraitUi.album);
+  lv_obj_set_size(musicPortraitUi.albumGlowA, 420, 420);
+  lv_obj_set_pos(musicPortraitUi.albumGlowA, -120, -150);
+  lv_obj_set_style_radius(musicPortraitUi.albumGlowA, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(musicPortraitUi.albumGlowA, hex(0x2AB6C9), 0);
+  lv_obj_set_style_bg_opa(musicPortraitUi.albumGlowA, LV_OPA_70, 0);
+
+  lv_obj_t *warmCore = makePlain(musicPortraitUi.album);
+  lv_obj_set_size(warmCore, 220, 220);
+  lv_obj_set_pos(warmCore, 16, 28);
+  lv_obj_set_style_radius(warmCore, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(warmCore, hex(0xFF6B5E), 0);
+  lv_obj_set_style_bg_opa(warmCore, LV_OPA_30, 0);
+
+  musicPortraitUi.albumGlowB = makePlain(musicPortraitUi.album);
+  lv_obj_set_size(musicPortraitUi.albumGlowB, 340, 340);
+  lv_obj_set_pos(musicPortraitUi.albumGlowB, 120, 150);
+  lv_obj_set_style_radius(musicPortraitUi.albumGlowB, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(musicPortraitUi.albumGlowB, hex(0xB86BFF), 0);
+  lv_obj_set_style_bg_opa(musicPortraitUi.albumGlowB, LV_OPA_40, 0);
+
+  musicPortraitUi.albumCanvas = lv_canvas_create(musicPortraitUi.album);
+  lv_obj_remove_style_all(musicPortraitUi.albumCanvas);
+  lv_obj_set_size(musicPortraitUi.albumCanvas, kSpotifyCoverSize, kSpotifyCoverSize);
+  lv_obj_set_pos(musicPortraitUi.albumCanvas, (albumSize - kSpotifyCoverSize) / 2,
+                 (albumSize - kSpotifyCoverSize) / 2);
+  lv_obj_add_flag(musicPortraitUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
+
+  musicPortraitUi.albumCounter = makeLabel(musicPortraitUi.album,
+                                           "TRACK 02 \xC2\xB7 OF 04",
+                                           &lv_font_montserrat_12, COL_INK_2);
+  lv_obj_set_style_text_letter_space(musicPortraitUi.albumCounter, 2, 0);
+  lv_obj_align(musicPortraitUi.albumCounter, LV_ALIGN_BOTTOM_LEFT, 18, -18);
+
+  lv_obj_t *eyebrow = makeLabel(musicPortraitUi.root, "NOW PLAYING",
+                                &lv_font_montserrat_12, COL_ACCENT);
+  lv_obj_set_style_text_letter_space(eyebrow, 2, 0);
+  lv_obj_align(eyebrow, LV_ALIGN_TOP_MID, 0, 448);
+
+  char titleBuf[32];
+  musicWriteTruncated(titleBuf, sizeof(titleBuf), kMusicTracks[0].title,
+                      kMusicTitleMaxChars);
+  musicPortraitUi.title = makeLabel(musicPortraitUi.root, titleBuf,
+                                    &lv_font_montserrat_28, COL_INK);
+  lv_obj_set_width(musicPortraitUi.title, 420);
+  lv_obj_set_style_text_align(musicPortraitUi.title, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_long_mode(musicPortraitUi.title, LV_LABEL_LONG_DOT);
+  lv_obj_align(musicPortraitUi.title, LV_ALIGN_TOP_MID, 0, 480);
+
+  char artistAlbumBuf[96];
+  snprintf(artistAlbumBuf, sizeof(artistAlbumBuf), "%s | %s",
+           kMusicTracks[0].artist, kMusicTracks[0].album);
+  musicPortraitUi.artistAlbum = makeLabel(musicPortraitUi.root, artistAlbumBuf,
+                                          &lv_font_montserrat_16, COL_INK_2);
+  lv_obj_set_width(musicPortraitUi.artistAlbum, 420);
+  lv_obj_set_style_text_align(musicPortraitUi.artistAlbum, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_long_mode(musicPortraitUi.artistAlbum, LV_LABEL_LONG_DOT);
+  lv_obj_align(musicPortraitUi.artistAlbum, LV_ALIGN_TOP_MID, 0, 522);
+
+  const int barsAreaX = 26;
+  const int barsAreaW = screenW - 52;
+  const int barsTop = 584;
+  const int barsBottomY = 656;
+  const int barsH = barsBottomY - barsTop;
+  const int barW = 18;
+  const int barGap = (barsAreaW - barW * kMusicSoundbarCount) / (kMusicSoundbarCount - 1);
+  musicPortraitUi.soundbarBaseY = barsBottomY;
+  musicPortraitUi.soundbarHeight = barsH;
+
+  for (int i = 0; i < kMusicSoundbarCount; ++i) {
+    lv_obj_t *bar = makePlain(musicPortraitUi.root);
+    const int h = 18 + (i * 11) % (barsH - 20);
+    lv_obj_set_size(bar, barW, h);
+    lv_obj_set_pos(bar, barsAreaX + i * (barW + barGap), barsBottomY - h);
+    lv_obj_set_style_radius(bar, 4, 0);
+    const uint32_t color = musicSoundbarColor(i);
+    lv_obj_set_style_bg_color(bar, hex(color), 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_width(bar, 12, 0);
+    lv_obj_set_style_shadow_color(bar, hex(color), 0);
+    lv_obj_set_style_shadow_opa(bar, LV_OPA_40, 0);
+    musicPortraitUi.soundbars[i] = bar;
+  }
+
+  const int railW = screenW - 48;
+  const int railH = 4;
+  const int railY = 684;
+  musicPortraitUi.progressRailWidth = railW;
+  lv_obj_t *rail = makePlain(musicPortraitUi.root);
+  lv_obj_set_size(rail, railW, railH);
+  lv_obj_set_pos(rail, 24, railY);
+  lv_obj_set_style_radius(rail, railH / 2, 0);
+  lv_obj_set_style_bg_color(rail, hex(0x253146), 0);
+  lv_obj_set_style_bg_opa(rail, LV_OPA_COVER, 0);
+
+  musicPortraitUi.progressFill = makePlain(rail);
+  lv_obj_set_size(musicPortraitUi.progressFill, railW / 4, railH);
+  lv_obj_set_pos(musicPortraitUi.progressFill, 0, 0);
+  lv_obj_set_style_radius(musicPortraitUi.progressFill, railH / 2, 0);
+  lv_obj_set_style_bg_color(musicPortraitUi.progressFill, hex(0x4A6B8A), 0);
+  lv_obj_set_style_bg_grad_color(musicPortraitUi.progressFill, hex(COL_ACCENT), 0);
+  lv_obj_set_style_bg_grad_dir(musicPortraitUi.progressFill, LV_GRAD_DIR_HOR, 0);
+  lv_obj_set_style_bg_opa(musicPortraitUi.progressFill, LV_OPA_COVER, 0);
+
+  musicPortraitUi.progressKnobHalo = makePlain(rail);
+  lv_obj_set_size(musicPortraitUi.progressKnobHalo, 20, 20);
+  lv_obj_set_style_radius(musicPortraitUi.progressKnobHalo, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(musicPortraitUi.progressKnobHalo, hex(COL_ACCENT), 0);
+  lv_obj_set_style_bg_opa(musicPortraitUi.progressKnobHalo, LV_OPA_30, 0);
+  lv_obj_set_pos(musicPortraitUi.progressKnobHalo, railW / 4 - 10, (railH - 20) / 2);
+
+  musicPortraitUi.progressKnob = makePlain(rail);
+  lv_obj_set_size(musicPortraitUi.progressKnob, 12, 12);
+  lv_obj_set_style_radius(musicPortraitUi.progressKnob, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(musicPortraitUi.progressKnob, hex(0xFFFFFF), 0);
+  lv_obj_set_style_bg_opa(musicPortraitUi.progressKnob, LV_OPA_COVER, 0);
+  lv_obj_set_style_shadow_width(musicPortraitUi.progressKnob, 18, 0);
+  lv_obj_set_style_shadow_color(musicPortraitUi.progressKnob, hex(COL_ACCENT), 0);
+  lv_obj_set_style_shadow_opa(musicPortraitUi.progressKnob, LV_OPA_80, 0);
+  lv_obj_set_pos(musicPortraitUi.progressKnob, railW / 4 - 6, (railH - 12) / 2);
+
+  musicPortraitUi.timeElapsed = makeLabel(musicPortraitUi.root, "0:00",
+                                          &lv_font_montserrat_12, COL_INK_2);
+  lv_obj_set_pos(musicPortraitUi.timeElapsed, 24, railY + 14);
+
+  musicPortraitUi.timeTotal = makeLabel(musicPortraitUi.root, "0:00",
+                                        &lv_font_montserrat_12, COL_INK_3);
+  lv_obj_set_style_text_align(musicPortraitUi.timeTotal, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_set_width(musicPortraitUi.timeTotal, 70);
+  lv_obj_set_pos(musicPortraitUi.timeTotal, screenW - 94, railY + 14);
+
+  const int smallSize = 38;
+  const int prevNextSize = 58;
+  const int playSize = 72;
+  const int ctrlY = 710;
+  musicPortraitUi.shuffleBtn = makeMusicSecondaryBtn(musicPortraitUi.root, smallSize,
+                                                     LV_SYMBOL_SHUFFLE,
+                                                     &lv_font_montserrat_18, COL_INK_2);
+  lv_obj_set_pos(musicPortraitUi.shuffleBtn, 48, ctrlY + (playSize - smallSize) / 2);
+
+  musicPortraitUi.prevBtn = makeMusicSecondaryBtn(musicPortraitUi.root, prevNextSize,
+                                                  LV_SYMBOL_PREV,
+                                                  &lv_font_montserrat_24, COL_INK);
+  lv_obj_set_style_bg_color(musicPortraitUi.prevBtn, hex(0x1B2238), 0);
+  lv_obj_set_style_bg_opa(musicPortraitUi.prevBtn, LV_OPA_70, 0);
+  lv_obj_set_pos(musicPortraitUi.prevBtn, 130, ctrlY + (playSize - prevNextSize) / 2);
+
+  musicPortraitUi.playGlow = makePlain(musicPortraitUi.root);
+  lv_obj_set_size(musicPortraitUi.playGlow, playSize + 28, playSize + 28);
+  lv_obj_set_pos(musicPortraitUi.playGlow, (screenW - playSize) / 2 - 14, ctrlY - 14);
+  lv_obj_set_style_radius(musicPortraitUi.playGlow, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(musicPortraitUi.playGlow, hex(COL_ACCENT), 0);
+  lv_obj_set_style_bg_opa(musicPortraitUi.playGlow, LV_OPA_20, 0);
+
+  musicPortraitUi.playBtn = makePlain(musicPortraitUi.root);
+  lv_obj_set_size(musicPortraitUi.playBtn, playSize, playSize);
+  lv_obj_set_pos(musicPortraitUi.playBtn, (screenW - playSize) / 2, ctrlY);
+  lv_obj_set_style_radius(musicPortraitUi.playBtn, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(musicPortraitUi.playBtn, hex(COL_ACCENT), 0);
+  lv_obj_set_style_bg_grad_color(musicPortraitUi.playBtn, hex(0x5BDCE9), 0);
+  lv_obj_set_style_bg_grad_dir(musicPortraitUi.playBtn, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_style_bg_opa(musicPortraitUi.playBtn, LV_OPA_COVER, 0);
+  lv_obj_set_style_shadow_width(musicPortraitUi.playBtn, 42, 0);
+  lv_obj_set_style_shadow_color(musicPortraitUi.playBtn, hex(COL_ACCENT), 0);
+  lv_obj_set_style_shadow_opa(musicPortraitUi.playBtn, LV_OPA_70, 0);
+  musicPortraitUi.playIcon = makeLabel(musicPortraitUi.playBtn, LV_SYMBOL_PAUSE,
+                                       &lv_font_montserrat_28, 0x062028);
+  lv_obj_center(musicPortraitUi.playIcon);
+
+  musicPortraitUi.nextBtn = makeMusicSecondaryBtn(musicPortraitUi.root, prevNextSize,
+                                                  LV_SYMBOL_NEXT,
+                                                  &lv_font_montserrat_24, COL_INK);
+  lv_obj_set_style_bg_color(musicPortraitUi.nextBtn, hex(0x1B2238), 0);
+  lv_obj_set_style_bg_opa(musicPortraitUi.nextBtn, LV_OPA_70, 0);
+  lv_obj_set_pos(musicPortraitUi.nextBtn, 292, ctrlY + (playSize - prevNextSize) / 2);
+
+  musicPortraitUi.repeatBtn = makeMusicSecondaryBtn(musicPortraitUi.root, smallSize,
+                                                    LV_SYMBOL_LOOP,
+                                                    &lv_font_montserrat_18, COL_INK_2);
+  lv_obj_set_pos(musicPortraitUi.repeatBtn, 394, ctrlY + (playSize - smallSize) / 2);
+}
+
+void updateMusicProgressUi(MusicUi &ui) {
+  if (!ui.progressFill || !ui.progressKnob) return;
   const int duration = musicCurrentDurationSec();
   const int elapsed = musicCurrentElapsedSec();
 
-  const int rail = musicUi.progressRailWidth;
+  const int rail = ui.progressRailWidth;
   const int fillW = (int)((long)elapsed * rail / duration);
-  lv_obj_set_width(musicUi.progressFill, fillW < 2 ? 2 : fillW);
-  lv_obj_set_x(musicUi.progressKnob, fillW - 6);
-  if (musicUi.progressKnobHalo) lv_obj_set_x(musicUi.progressKnobHalo, fillW - 10);
+  lv_obj_set_width(ui.progressFill, fillW < 2 ? 2 : fillW);
+  lv_obj_set_x(ui.progressKnob, fillW - 6);
+  if (ui.progressKnobHalo) lv_obj_set_x(ui.progressKnobHalo, fillW - 10);
 
-  lv_label_set_text(musicUi.timeElapsed, musicFormatTime(elapsed).c_str());
-  lv_label_set_text(musicUi.timeTotal,   musicFormatTime(duration).c_str());
+  if (ui.timeElapsed) lv_label_set_text(ui.timeElapsed, musicFormatTime(elapsed).c_str());
+  if (ui.timeTotal)   lv_label_set_text(ui.timeTotal,   musicFormatTime(duration).c_str());
 }
 
-void updateMusicTrackUi() {
-  if (musicUi.title) {
+void updateMusicProgress() {
+  updateMusicProgressUi(musicUi);
+  updateMusicProgressUi(musicPortraitUi);
+}
+
+void updateMusicSoundbarVisibilityUi(MusicUi &ui) {
+  const bool playing = musicCurrentlyPlaying();
+  for (int i = 0; i < kMusicSoundbarCount; ++i) {
+    if (!ui.soundbars[i]) continue;
+    if (playing) lv_obj_clear_flag(ui.soundbars[i], LV_OBJ_FLAG_HIDDEN);
+    else         lv_obj_add_flag(ui.soundbars[i], LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+void updateMusicSoundbarVisibility() {
+  updateMusicSoundbarVisibilityUi(musicUi);
+  updateMusicSoundbarVisibilityUi(musicPortraitUi);
+}
+
+void updateMusicTrackOne(MusicUi &ui) {
+  if (ui.title) {
     char buf[32];
     musicWriteTruncated(buf, sizeof(buf), musicCurrentTitle(), kMusicTitleMaxChars);
-    lv_label_set_text(musicUi.title, buf);
+    lv_label_set_text(ui.title, buf);
   }
-  if (musicUi.artistAlbum) {
+  if (ui.artistAlbum) {
     char buf[96];
     snprintf(buf, sizeof(buf), "%s | %s", musicCurrentArtist(), musicCurrentAlbum());
-    lv_label_set_text(musicUi.artistAlbum, buf);
+    lv_label_set_text(ui.artistAlbum, buf);
   }
-  if (musicUi.albumCounter) {
+  if (ui.albumCounter) {
     if (spotify.valid) {
-      lv_label_set_text(musicUi.albumCounter, "LIVE FROM SPOTIFY");
+      lv_label_set_text(ui.albumCounter, "LIVE FROM SPOTIFY");
     } else {
       char buf[32];
       snprintf(buf, sizeof(buf), "TRACK %02d \xC2\xB7 OF %02d",
                musicTrackIndex + 1, kMusicTrackCount);
-      lv_label_set_text(musicUi.albumCounter, buf);
+      lv_label_set_text(ui.albumCounter, buf);
     }
   }
+}
+
+void updateMusicTrackUi() {
+  updateMusicTrackOne(musicUi);
+  updateMusicTrackOne(musicPortraitUi);
   // The album art stays the same teal→purple radial backdrop across tracks
   // (matching the reference), so we no longer recolor the tile per-track.
   updateMusicProgress();
 }
 
+void updateMusicPlayIconOne(MusicUi &ui) {
+  if (!ui.playIcon) return;
+  lv_label_set_text(ui.playIcon, musicCurrentlyPlaying() ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+}
+
 void updateMusicPlayIcon() {
-  if (!musicUi.playIcon) return;
-  lv_label_set_text(musicUi.playIcon, musicCurrentlyPlaying() ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+  updateMusicPlayIconOne(musicUi);
+  updateMusicPlayIconOne(musicPortraitUi);
+  updateMusicSoundbarVisibility();
 }
 
 void musicTogglePlay() {

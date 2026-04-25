@@ -89,6 +89,7 @@ enum class ScreenIndex : int {
   Weather = 1,
   Portrait = 2,
   Music = 3,    // Reached via "up" from Clock; not part of the swipe carousel.
+  MusicPortrait = 4,
   Count = 3,    // Count of screens that participate in swipe rotation (Clock/Weather/Portrait).
 };
 
@@ -220,6 +221,7 @@ lv_obj_t *rootForScreen(ScreenIndex s) {
     case ScreenIndex::Weather: return weatherUi.root;
     case ScreenIndex::Portrait: return portraitUi.root;
     case ScreenIndex::Music: return musicUi.root;
+    case ScreenIndex::MusicPortrait: return musicPortraitUi.root;
     default: return clockUi.root;
   }
 }
@@ -230,12 +232,13 @@ const char *screenName(ScreenIndex s) {
     case ScreenIndex::Weather: return "weather";
     case ScreenIndex::Portrait: return "port";
     case ScreenIndex::Music: return "music";
+    case ScreenIndex::MusicPortrait: return "music-portrait";
     default: return "clock";
   }
 }
 
 bool isPortraitScreen(ScreenIndex s) {
-  return s == ScreenIndex::Portrait;
+  return s == ScreenIndex::Portrait || s == ScreenIndex::MusicPortrait;
 }
 
 void applyScreenOrientation(ScreenIndex s) {
@@ -273,7 +276,8 @@ void showScreen(ScreenIndex s, int direction = 0) {
 
   // Hide the previously-outgoing screen's stale positions from earlier
   // toggles, other than the one we're animating right now.
-  lv_obj_t *roots[] = {clockUi.root, weatherUi.root, portraitUi.root, musicUi.root};
+  lv_obj_t *roots[] = {clockUi.root, weatherUi.root, portraitUi.root,
+                       musicUi.root, musicPortraitUi.root};
   for (lv_obj_t *other : roots) {
     if (other && other != incoming && other != outgoing) {
       lv_obj_add_flag(other, LV_OBJ_FLAG_HIDDEN);
@@ -285,7 +289,7 @@ void showScreen(ScreenIndex s, int direction = 0) {
   // Hide the carousel pill on Music (it's not part of the swipe rotation).
   lv_obj_t *pillParent = lv_obj_get_parent(pageDotClock);
   if (pillParent) {
-    if (s == ScreenIndex::Music) lv_obj_add_flag(pillParent, LV_OBJ_FLAG_HIDDEN);
+    if (isMusicScreen(s)) lv_obj_add_flag(pillParent, LV_OBJ_FLAG_HIDDEN);
     else                          lv_obj_clear_flag(pillParent, LV_OBJ_FLAG_HIDDEN);
   }
   lv_obj_move_foreground(pillParent);
@@ -688,7 +692,7 @@ void tickMusic() {
 
   // Advance playback once per second when playing.
   if (spotify.valid) {
-    if (currentScreen == ScreenIndex::Music) updateMusicProgress();
+    if (isMusicScreen(currentScreen)) updateMusicProgress();
   } else if (musicIsPlaying) {
     if (now - musicLastTickMs >= 1000UL) {
       const unsigned long stepSec = (now - musicLastTickMs) / 1000UL;
@@ -698,9 +702,9 @@ void tickMusic() {
       if (musicElapsedSec >= duration) {
         musicTrackIndex = (musicTrackIndex + 1) % kMusicTrackCount;
         musicElapsedSec = 0;
-        if (currentScreen == ScreenIndex::Music) updateMusicTrackUi();
+        if (isMusicScreen(currentScreen)) updateMusicTrackUi();
       }
-      if (currentScreen == ScreenIndex::Music) updateMusicProgress();
+      if (isMusicScreen(currentScreen)) updateMusicProgress();
     }
   } else {
     // Keep the baseline current so the next "play" doesn't instantly jump.
@@ -709,17 +713,24 @@ void tickMusic() {
 
   // Animate the colorful soundbars. Only touch LVGL objects when the Music
   // screen is the active surface — no point repainting while hidden.
-  if (currentScreen != ScreenIndex::Music) return;
-  if (!musicUi.soundbars[0]) return;
+  if (!isMusicScreen(currentScreen)) return;
+  MusicUi &ui = activeMusicUi();
+  if (!ui.soundbars[0]) return;
   if (now - musicLastBarAnimMs < 80UL) return;
   musicLastBarAnimMs = now;
 
-  const int baseY = musicUi.soundbarBaseY;
-  const int maxH = musicUi.soundbarHeight;
+  const int baseY = ui.soundbarBaseY;
+  const int maxH = ui.soundbarHeight;
   const int minH = 10;
 
+  if (!musicCurrentlyPlaying()) {
+    updateMusicSoundbarVisibility();
+    return;
+  }
+  updateMusicSoundbarVisibility();
+
   for (int i = 0; i < kMusicSoundbarCount; ++i) {
-    int h;
+    int h = minH;
     if (musicCurrentlyPlaying()) {
       // Pseudo-random oscillation using a per-bar phase advanced each tick.
       // Three detuned sinusoids summed → a lively bouncing pattern without
@@ -733,12 +744,9 @@ void tickMusic() {
       const int mix = (s1 + s2 + s3) / 3;                 // [-32767, 32767]
       const int norm = (mix + 32768) * 1000 / 65536;      // [0, 1000]
       h = minH + (maxH - minH) * norm / 1000;
-    } else {
-      // Settle to a quiet floor when paused.
-      h = minH + 4 + (i % 3) * 2;
     }
-    lv_obj_set_height(musicUi.soundbars[i], h);
-    lv_obj_set_y(musicUi.soundbars[i], baseY - h);
+    lv_obj_set_height(ui.soundbars[i], h);
+    lv_obj_set_y(ui.soundbars[i], baseY - h);
   }
 }
 
@@ -757,6 +765,7 @@ void tickLinkState() {
   setStatusRowState(weatherUi.status, link);
   setStatusRowState(portraitUi.status, link);
   setStatusRowState(musicUi.status, link);
+  setStatusRowState(musicPortraitUi.status, link);
 
   const char *leftLabel = (link == LinkState::Online)  ? "CONNECTED"
                         : (link == LinkState::Offline) ? "OFFLINE"
@@ -795,6 +804,7 @@ void setup() {
   buildWeatherScreen(scr);
   buildPortraitClockScreen(scr);
   buildMusicScreen(scr);
+  buildMusicPortraitScreen(scr);
   buildPageDots(scr);
   showScreen(ScreenIndex::Clock, 0);
   refreshPageDots();
@@ -816,7 +826,7 @@ void setup() {
   updateWeatherUi();
   updatePortraitClockUi();
 
-  Serial.println("UI ready. Commands: clock|c, weather|w, port, music|m, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, d<0-255>, show <name>, hide, help");
+  Serial.println("UI ready. Commands: clock|c, weather|w, port, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, d<0-255>, show <name>, hide, help");
   fetchWeather();
   fetchSpotifyPlayback();
 }

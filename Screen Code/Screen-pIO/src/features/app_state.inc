@@ -48,6 +48,7 @@ struct MusicUi {
   int soundbarBaseY = 0;
   int soundbarHeight = 0;
 } musicUi;
+MusicUi musicPortraitUi;
 
 int musicTrackIndex = 0;
 bool musicIsPlaying = true;
