@@ -11,6 +11,33 @@ void buildClockScreen(lv_obj_t *parent) {
 
   // Status row
   buildStatusRow(clockUi.root, clockUi.status, "CONNECTING", "");
+  lv_obj_t *mainStatus = lv_obj_get_parent(clockUi.status.dot);
+  lv_obj_set_size(mainStatus, 160, 28);
+  lv_obj_set_pos(mainStatus, 12, 12);
+  lv_obj_set_style_bg_color(mainStatus, hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(mainStatus, LV_OPA_40, 0);
+  lv_obj_set_style_radius(mainStatus, 14, 0);
+  lv_obj_set_style_pad_left(mainStatus, 10, 0);
+  lv_obj_set_style_pad_right(mainStatus, 10, 0);
+  lv_obj_set_style_border_width(mainStatus, 1, 0);
+  lv_obj_set_style_border_color(mainStatus, hex(COL_GLASS_STROKE), 0);
+  lv_obj_set_style_border_opa(mainStatus, LV_OPA_70, 0);
+  lv_obj_set_size(clockUi.status.dot, 10, 10);
+  lv_obj_align(clockUi.status.dot, LV_ALIGN_LEFT_MID, 10, 0);
+  lv_obj_set_style_text_color(clockUi.status.connected, hex(COL_INK), 0);
+  lv_obj_set_style_text_font(clockUi.status.connected, &lv_font_montserrat_14, 0);
+  lv_obj_align(clockUi.status.connected, LV_ALIGN_LEFT_MID, 28, 0);
+  lv_obj_add_flag(clockUi.status.rightInfo, LV_OBJ_FLAG_HIDDEN);
+  const uint32_t mainStatusChildCount = lv_obj_get_child_cnt(mainStatus);
+  for (uint32_t i = 0; i < mainStatusChildCount; ++i) {
+    lv_obj_t *child = lv_obj_get_child(mainStatus, i);
+    if (child != clockUi.status.dot &&
+        child != clockUi.status.connected &&
+        child != clockUi.status.rightInfo) {
+      lv_obj_add_flag(child, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+  lv_obj_move_foreground(mainStatus);
 
   // Date strip
   lv_obj_t *dateStrip = makePlain(clockUi.root);
