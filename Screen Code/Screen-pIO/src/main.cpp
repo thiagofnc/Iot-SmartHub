@@ -10,9 +10,11 @@
 #include <ctype.h>
 #include <esp_heap_caps.h>
 #include <lvgl.h>
+#include <mbedtls/base64.h>
 #include <limits.h>
 #include <math.h>
 #include <string.h>
+#include <TJpg_Decoder.h>
 #include <time.h>
 
 #include "AppConfig.h"
@@ -34,6 +36,7 @@ constexpr uint16_t SCREEN_HEIGHT = 480;
 constexpr uint16_t PORTRAIT_WIDTH = SCREEN_HEIGHT;
 constexpr uint16_t PORTRAIT_HEIGHT = SCREEN_WIDTH;
 constexpr uint32_t WEATHER_REFRESH_MS = 10UL * 60UL * 1000UL;
+constexpr uint32_t SPOTIFY_REFRESH_MS = 5000UL;
 constexpr uint32_t WIFI_RETRY_MS = 15000UL;
 constexpr uint32_t HTTP_TIMEOUT_MS = 15000UL;
 constexpr uint32_t STARTUP_COLOR_TEST_MS = 250UL;
@@ -216,6 +219,7 @@ struct MusicUi {
   lv_obj_t *root = nullptr;
   StatusRow status;
   lv_obj_t *album = nullptr;
+  lv_obj_t *albumCanvas = nullptr;
   lv_obj_t *albumGlowA = nullptr;   // inner radial highlight
   lv_obj_t *albumGlowB = nullptr;   // outer corner tint
   lv_obj_t *albumCounter = nullptr; // "TRACK 02 • OF 04" overlay label
@@ -245,6 +249,28 @@ int musicElapsedSec = 42;         // pre-seeded so the progress bar isn't empty 
 unsigned long musicLastTickMs = 0;
 unsigned long musicLastBarAnimMs = 0;
 uint8_t musicSoundbarPhase[kMusicSoundbarCount] = {0};
+
+struct SpotifyState {
+  bool valid = false;
+  bool isPlaying = false;
+  String title;
+  String artist;
+  String album;
+  String imageUrl;
+  String coverLoadedUrl;
+  String accessToken;
+  String lastError;
+  int durationSec = 1;
+  int progressSec = 0;
+  unsigned long tokenExpiresAtMs = 0;
+  unsigned long lastFetchMs = 0;
+  unsigned long lastProgressSyncMs = 0;
+};
+
+SpotifyState spotify;
+lv_color_t *spotifyCoverBuffer = nullptr;
+lv_img_dsc_t spotifyCoverDsc;
+constexpr int kSpotifyCoverSize = 300;
 
 struct WeatherUi {
   lv_obj_t *root = nullptr;
@@ -368,6 +394,26 @@ String urlEncode(const String &value) {
       encoded += hexd[c & 0x0F];
     }
   }
+  return encoded;
+}
+
+String base64Encode(const String &value) {
+  size_t outLen = 0;
+  mbedtls_base64_encode(nullptr, 0, &outLen,
+                        reinterpret_cast<const unsigned char *>(value.c_str()),
+                        value.length());
+  if (outLen == 0) return "";
+  unsigned char *out = static_cast<unsigned char *>(malloc(outLen + 1));
+  if (!out) return "";
+  if (mbedtls_base64_encode(out, outLen, &outLen,
+                            reinterpret_cast<const unsigned char *>(value.c_str()),
+                            value.length()) != 0) {
+    free(out);
+    return "";
+  }
+  out[outLen] = '\0';
+  String encoded(reinterpret_cast<char *>(out));
+  free(out);
   return encoded;
 }
 
@@ -1077,6 +1123,44 @@ const MusicTrack &musicCurrentTrack() {
   return kMusicTracks[musicTrackIndex];
 }
 
+const char *musicCurrentTitle() {
+  return spotify.valid && !spotify.title.isEmpty()
+             ? spotify.title.c_str()
+             : musicCurrentTrack().title;
+}
+
+const char *musicCurrentArtist() {
+  return spotify.valid && !spotify.artist.isEmpty()
+             ? spotify.artist.c_str()
+             : musicCurrentTrack().artist;
+}
+
+const char *musicCurrentAlbum() {
+  return spotify.valid && !spotify.album.isEmpty()
+             ? spotify.album.c_str()
+             : musicCurrentTrack().album;
+}
+
+int musicCurrentDurationSec() {
+  return spotify.valid ? max(spotify.durationSec, 1) : musicCurrentTrack().durationSec;
+}
+
+int musicCurrentElapsedSec() {
+  if (!spotify.valid) return musicElapsedSec;
+  int elapsed = spotify.progressSec;
+  if (spotify.isPlaying && spotify.lastProgressSyncMs > 0) {
+    elapsed += (int)((millis() - spotify.lastProgressSyncMs) / 1000UL);
+  }
+  return min(max(elapsed, 0), musicCurrentDurationSec());
+}
+
+bool musicCurrentlyPlaying() {
+  return spotify.valid ? spotify.isPlaying : musicIsPlaying;
+}
+
+bool spotifyCommand(const char *path, const char *method = "POST");
+bool fetchSpotifyPlayback();
+
 // Build one of the round secondary controls (shuffle/prev/next/repeat) so the
 // trio of small buttons share one styling path and stay visually consistent.
 lv_obj_t *makeMusicSecondaryBtn(lv_obj_t *parent, int size, const char *symbol,
@@ -1160,6 +1244,12 @@ void buildMusicScreen(lv_obj_t *parent) {
   lv_obj_set_style_radius(musicUi.albumGlowB, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_color(musicUi.albumGlowB, hex(0x8B3DBB), 0);
   lv_obj_set_style_bg_opa(musicUi.albumGlowB, LV_OPA_40, 0);
+
+  musicUi.albumCanvas = lv_canvas_create(musicUi.album);
+  lv_obj_remove_style_all(musicUi.albumCanvas);
+  lv_obj_set_size(musicUi.albumCanvas, albumSize, albumSize);
+  lv_obj_set_pos(musicUi.albumCanvas, 0, 0);
+  lv_obj_add_flag(musicUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
 
   // Track counter in the bottom-left corner.
   musicUi.albumCounter = makeLabel(musicUi.album, "TRACK 02 \xC2\xB7 OF 04",
@@ -1364,38 +1454,39 @@ void buildMusicScreen(lv_obj_t *parent) {
 
 void updateMusicProgress() {
   if (!musicUi.progressFill || !musicUi.progressKnob) return;
-  const MusicTrack &t = musicCurrentTrack();
-  const int duration = t.durationSec > 0 ? t.durationSec : 1;
-  if (musicElapsedSec > duration) musicElapsedSec = duration;
-  if (musicElapsedSec < 0) musicElapsedSec = 0;
+  const int duration = musicCurrentDurationSec();
+  const int elapsed = musicCurrentElapsedSec();
 
   const int rail = musicUi.progressRailWidth;
-  const int fillW = (int)((long)musicElapsedSec * rail / duration);
+  const int fillW = (int)((long)elapsed * rail / duration);
   lv_obj_set_width(musicUi.progressFill, fillW < 2 ? 2 : fillW);
   lv_obj_set_x(musicUi.progressKnob, fillW - 6);
   if (musicUi.progressKnobHalo) lv_obj_set_x(musicUi.progressKnobHalo, fillW - 10);
 
-  lv_label_set_text(musicUi.timeElapsed, musicFormatTime(musicElapsedSec).c_str());
+  lv_label_set_text(musicUi.timeElapsed, musicFormatTime(elapsed).c_str());
   lv_label_set_text(musicUi.timeTotal,   musicFormatTime(duration).c_str());
 }
 
 void updateMusicTrackUi() {
-  const MusicTrack &t = musicCurrentTrack();
   if (musicUi.title) {
     char buf[32];
-    musicWriteTruncated(buf, sizeof(buf), t.title, kMusicTitleMaxChars);
+    musicWriteTruncated(buf, sizeof(buf), musicCurrentTitle(), kMusicTitleMaxChars);
     lv_label_set_text(musicUi.title, buf);
   }
   if (musicUi.artistAlbum) {
     char buf[96];
-    snprintf(buf, sizeof(buf), "%s | %s", t.artist, t.album);
+    snprintf(buf, sizeof(buf), "%s | %s", musicCurrentArtist(), musicCurrentAlbum());
     lv_label_set_text(musicUi.artistAlbum, buf);
   }
   if (musicUi.albumCounter) {
-    char buf[32];
-    snprintf(buf, sizeof(buf), "TRACK %02d \xC2\xB7 OF %02d",
-             musicTrackIndex + 1, kMusicTrackCount);
-    lv_label_set_text(musicUi.albumCounter, buf);
+    if (spotify.valid) {
+      lv_label_set_text(musicUi.albumCounter, "LIVE FROM SPOTIFY");
+    } else {
+      char buf[32];
+      snprintf(buf, sizeof(buf), "TRACK %02d \xC2\xB7 OF %02d",
+               musicTrackIndex + 1, kMusicTrackCount);
+      lv_label_set_text(musicUi.albumCounter, buf);
+    }
   }
   // The album art stays the same teal→purple radial backdrop across tracks
   // (matching the reference), so we no longer recolor the tile per-track.
@@ -1404,16 +1495,34 @@ void updateMusicTrackUi() {
 
 void updateMusicPlayIcon() {
   if (!musicUi.playIcon) return;
-  lv_label_set_text(musicUi.playIcon, musicIsPlaying ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+  lv_label_set_text(musicUi.playIcon, musicCurrentlyPlaying() ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
 }
 
 void musicTogglePlay() {
+  if (spotify.valid) {
+    const bool wasPlaying = spotify.isPlaying;
+    if (!spotifyCommand(wasPlaying ? "/me/player/pause" : "/me/player/play", "PUT")) {
+      Serial.println(spotify.lastError.c_str());
+      return;
+    }
+  }
+  if (spotify.valid) {
+    spotify.isPlaying = !spotify.isPlaying;
+    spotify.progressSec = musicCurrentElapsedSec();
+    spotify.lastProgressSyncMs = millis();
+  }
   musicIsPlaying = !musicIsPlaying;
   musicLastTickMs = millis();
   updateMusicPlayIcon();
 }
 
 void musicNextTrack() {
+  if (spotify.valid && spotifyCommand("/me/player/next")) {
+    spotify.valid = false;
+    fetchSpotifyPlayback();
+    return;
+  }
+  spotify.valid = false;
   musicTrackIndex = (musicTrackIndex + 1) % kMusicTrackCount;
   musicElapsedSec = 0;
   musicLastTickMs = millis();
@@ -1421,6 +1530,12 @@ void musicNextTrack() {
 }
 
 void musicPrevTrack() {
+  if (spotify.valid && spotifyCommand("/me/player/previous")) {
+    spotify.valid = false;
+    fetchSpotifyPlayback();
+    return;
+  }
+  spotify.valid = false;
   // If we're past the first few seconds, a "prev" first restarts the current
   // track (matches typical music-app behavior) before stepping back.
   if (musicElapsedSec > 3) {
@@ -2013,6 +2128,291 @@ bool fetchWeather() {
 }
 
 // ---------------------------------------------------------------------------
+// Spotify Web API
+// ---------------------------------------------------------------------------
+bool spotifyConfigured() {
+  return strlen(SPOTIFY_CLIENT_ID) > 0 &&
+         strlen(SPOTIFY_CLIENT_SECRET) > 0 &&
+         strlen(SPOTIFY_REFRESH_TOKEN) > 0;
+}
+
+String spotifyDeviceQuery() {
+  if (strlen(SPOTIFY_DEVICE_ID) == 0) return "";
+  return String("?device_id=") + urlEncode(SPOTIFY_DEVICE_ID);
+}
+
+bool spotifyRefreshAccessToken() {
+  if (!spotifyConfigured()) {
+    spotify.lastError = "MISSING SPOTIFY TOKEN";
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) connectWifiIfNeeded();
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  WiFiClientSecure client; client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  if (!http.begin(client, "https://accounts.spotify.com/api/token")) {
+    spotify.lastError = "SPOTIFY AUTH HTTP";
+    return false;
+  }
+
+  const String credentials = String(SPOTIFY_CLIENT_ID) + ":" + SPOTIFY_CLIENT_SECRET;
+  http.addHeader("Authorization", "Basic " + base64Encode(credentials));
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+  String body = "grant_type=refresh_token&refresh_token=";
+  body += urlEncode(SPOTIFY_REFRESH_TOKEN);
+
+  const int code = http.POST(body);
+  const String payload = http.getString();
+  http.end();
+  if (code != HTTP_CODE_OK) {
+    spotify.lastError = String("SPOTIFY AUTH ") + String(code);
+    return false;
+  }
+
+  JsonDocument doc;
+  if (deserializeJson(doc, payload)) {
+    spotify.lastError = "SPOTIFY AUTH JSON";
+    return false;
+  }
+  spotify.accessToken = String(doc["access_token"] | "");
+  const int expiresIn = doc["expires_in"] | 3600;
+  spotify.tokenExpiresAtMs = millis() + (unsigned long)max(expiresIn - 60, 60) * 1000UL;
+  spotify.lastError = "";
+  return !spotify.accessToken.isEmpty();
+}
+
+bool spotifyEnsureToken() {
+  if (!spotify.accessToken.isEmpty() && millis() < spotify.tokenExpiresAtMs) return true;
+  return spotifyRefreshAccessToken();
+}
+
+bool spotifyRequest(const char *method, const String &path, const String &body, String *payloadOut) {
+  if (!spotifyEnsureToken()) return false;
+
+  WiFiClientSecure client; client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  const String url = String("https://api.spotify.com/v1") + path;
+  if (!http.begin(client, url)) {
+    spotify.lastError = "SPOTIFY HTTP CLIENT";
+    return false;
+  }
+  http.addHeader("Authorization", "Bearer " + spotify.accessToken);
+  if (body.length() > 0) http.addHeader("Content-Type", "application/json");
+
+  int code;
+  if (strcmp(method, "GET") == 0) code = http.GET();
+  else if (strcmp(method, "POST") == 0) code = http.POST(body);
+  else code = http.sendRequest(method, body);
+
+  String payload;
+  if (code != HTTP_CODE_NO_CONTENT) payload = http.getString();
+  http.end();
+
+  if (code == HTTP_CODE_UNAUTHORIZED) {
+    spotify.accessToken = "";
+    if (!spotifyRefreshAccessToken()) return false;
+    return spotifyRequest(method, path, body, payloadOut);
+  }
+
+  if (code < 200 || code >= 300) {
+    spotify.lastError = String("SPOTIFY HTTP ") + String(code);
+    return false;
+  }
+  if (payloadOut) *payloadOut = payload;
+  spotify.lastError = "";
+  return true;
+}
+
+bool spotifyJpgOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap) {
+  if (!spotifyCoverBuffer) return false;
+  for (uint16_t row = 0; row < h; ++row) {
+    const int dstY = y + row;
+    if (dstY < 0 || dstY >= kSpotifyCoverSize) continue;
+    for (uint16_t col = 0; col < w; ++col) {
+      const int dstX = x + col;
+      if (dstX < 0 || dstX >= kSpotifyCoverSize) continue;
+      const uint16_t p = bitmap[row * w + col];
+      const uint8_t r = (uint8_t)(((p >> 11) & 0x1F) * 255 / 31);
+      const uint8_t g = (uint8_t)(((p >> 5) & 0x3F) * 255 / 63);
+      const uint8_t b = (uint8_t)((p & 0x1F) * 255 / 31);
+      spotifyCoverBuffer[dstY * kSpotifyCoverSize + dstX] = lv_color_make(r, g, b);
+    }
+  }
+  return true;
+}
+
+void spotifyShowFallbackCover() {
+  if (musicUi.albumCanvas) lv_obj_add_flag(musicUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool spotifyLoadAlbumCover(const String &imageUrl) {
+  if (imageUrl.isEmpty() || imageUrl == spotify.coverLoadedUrl) return true;
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  if (!spotifyCoverBuffer) {
+    spotifyCoverBuffer = static_cast<lv_color_t *>(heap_caps_malloc(
+        kSpotifyCoverSize * kSpotifyCoverSize * sizeof(lv_color_t),
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!spotifyCoverBuffer) {
+      spotifyCoverBuffer = static_cast<lv_color_t *>(heap_caps_malloc(
+          kSpotifyCoverSize * kSpotifyCoverSize * sizeof(lv_color_t),
+          MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+  }
+  if (!spotifyCoverBuffer) {
+    spotify.lastError = "COVER BUFFER FAILED";
+    return false;
+  }
+
+  WiFiClientSecure client; client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  if (!http.begin(client, imageUrl)) return false;
+  const int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    http.end();
+    return false;
+  }
+
+  const int contentLength = http.getSize();
+  if (contentLength <= 0 || contentLength > 220000) {
+    http.end();
+    return false;
+  }
+  uint8_t *jpg = static_cast<uint8_t *>(heap_caps_malloc(contentLength, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!jpg) jpg = static_cast<uint8_t *>(heap_caps_malloc(contentLength, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  if (!jpg) {
+    http.end();
+    return false;
+  }
+
+  WiFiClient *stream = http.getStreamPtr();
+  int readTotal = 0;
+  while (http.connected() && readTotal < contentLength) {
+    const int available = stream->available();
+    if (available > 0) {
+      const int toRead = min(available, contentLength - readTotal);
+      const int readNow = stream->readBytes(jpg + readTotal, toRead);
+      if (readNow <= 0) break;
+      readTotal += readNow;
+    } else {
+      delay(1);
+      lv_timer_handler();
+    }
+  }
+  http.end();
+  if (readTotal != contentLength) {
+    heap_caps_free(jpg);
+    return false;
+  }
+
+  lv_color_t fill = hex(0x111827);
+  for (int i = 0; i < kSpotifyCoverSize * kSpotifyCoverSize; ++i) spotifyCoverBuffer[i] = fill;
+  TJpgDec.setJpgScale(1);
+  TJpgDec.setCallback(spotifyJpgOutput);
+  const bool decoded = TJpgDec.drawJpg(0, 0, jpg, contentLength) == JDR_OK;
+  heap_caps_free(jpg);
+  if (!decoded) return false;
+
+  spotifyCoverDsc.header.always_zero = 0;
+  spotifyCoverDsc.header.w = kSpotifyCoverSize;
+  spotifyCoverDsc.header.h = kSpotifyCoverSize;
+  spotifyCoverDsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+  spotifyCoverDsc.data_size = kSpotifyCoverSize * kSpotifyCoverSize * sizeof(lv_color_t);
+  spotifyCoverDsc.data = reinterpret_cast<const uint8_t *>(spotifyCoverBuffer);
+  if (musicUi.albumCanvas) {
+    lv_canvas_set_buffer(musicUi.albumCanvas, spotifyCoverBuffer,
+                         kSpotifyCoverSize, kSpotifyCoverSize, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_clear_flag(musicUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
+  }
+  spotify.coverLoadedUrl = imageUrl;
+  return true;
+}
+
+bool fetchSpotifyPlayback() {
+  if (!spotifyConfigured()) return false;
+  if (WiFi.status() != WL_CONNECTED) connectWifiIfNeeded();
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  String path = "/me/player/currently-playing";
+  if (strlen(SPOTIFY_MARKET) > 0) {
+    path += "?market=";
+    path += urlEncode(SPOTIFY_MARKET);
+  }
+
+  String payload;
+  if (!spotifyRequest("GET", path, "", &payload)) return false;
+  spotify.lastFetchMs = millis();
+  if (payload.isEmpty()) {
+    spotify.valid = false;
+    spotify.lastError = "NOT PLAYING";
+    spotifyShowFallbackCover();
+    updateMusicTrackUi();
+    updateMusicPlayIcon();
+    return false;
+  }
+
+  JsonDocument doc;
+  if (deserializeJson(doc, payload)) {
+    spotify.lastError = "SPOTIFY JSON";
+    return false;
+  }
+  JsonVariant item = doc["item"];
+  if (item.isNull() || strcmp(item["type"] | "track", "track") != 0) {
+    spotify.valid = false;
+    spotify.lastError = "NO TRACK";
+    spotifyShowFallbackCover();
+    return false;
+  }
+
+  spotify.title = String(item["name"] | "Unknown track");
+  spotify.album = String(item["album"]["name"] | "Spotify");
+  spotify.artist = "";
+  JsonArray artists = item["artists"].as<JsonArray>();
+  for (JsonVariant artist : artists) {
+    if (!spotify.artist.isEmpty()) spotify.artist += ", ";
+    spotify.artist += String(artist["name"] | "");
+  }
+  if (spotify.artist.isEmpty()) spotify.artist = "Unknown artist";
+  spotify.durationSec = max((int)((item["duration_ms"] | 0) / 1000), 1);
+  spotify.progressSec = max((int)((doc["progress_ms"] | 0) / 1000), 0);
+  spotify.isPlaying = doc["is_playing"] | false;
+  spotify.lastProgressSyncMs = millis();
+
+  JsonArray images = item["album"]["images"].as<JsonArray>();
+  spotify.imageUrl = "";
+  for (JsonVariant image : images) {
+    const int w = image["width"] | 0;
+    const char *url = image["url"] | "";
+    if (w <= kSpotifyCoverSize && strlen(url) > 0) {
+      spotify.imageUrl = url;
+      break;
+    }
+    if (spotify.imageUrl.isEmpty() && strlen(url) > 0) spotify.imageUrl = url;
+  }
+
+  spotify.valid = true;
+  spotify.lastError = "";
+  spotifyLoadAlbumCover(spotify.imageUrl);
+  updateMusicTrackUi();
+  updateMusicPlayIcon();
+  if (clockUi.nowPlayingTitle) lv_label_set_text(clockUi.nowPlayingTitle, musicCurrentTitle());
+  if (clockUi.nowPlayingArtist) lv_label_set_text(clockUi.nowPlayingArtist, musicCurrentArtist());
+  if (portraitUi.nowPlayingTitle) lv_label_set_text(portraitUi.nowPlayingTitle, musicCurrentTitle());
+  if (portraitUi.nowPlayingArtist) lv_label_set_text(portraitUi.nowPlayingArtist, musicCurrentArtist());
+  return true;
+}
+
+bool spotifyCommand(const char *path, const char *method) {
+  if (!spotifyConfigured()) return false;
+  return spotifyRequest(method, String(path) + spotifyDeviceQuery(), "", nullptr);
+}
+
+// ---------------------------------------------------------------------------
 // SD card / image viewer
 // ---------------------------------------------------------------------------
 bool initSdCard() {
@@ -2146,7 +2546,7 @@ void handleSerialCommands() {
         // On Music, "down" is the play/pause toggle. Elsewhere it returns to Clock.
         if (currentScreen == ScreenIndex::Music) {
           musicTogglePlay();
-          Serial.println(musicIsPlaying ? "play" : "pause");
+          Serial.println(musicCurrentlyPlaying() ? "play" : "pause");
         } else {
           showScreen(ScreenIndex::Clock);
           Serial.println(screenName(currentScreen));
@@ -2175,6 +2575,11 @@ void handleSerialCommands() {
         return;
       }
       if (cmd == "refresh" || cmd == "r") { fetchWeather(); Serial.println("refreshed"); return; }
+      if (cmd == "spotify" || cmd == "sp") {
+        if (fetchSpotifyPlayback()) Serial.println("spotify refreshed");
+        else Serial.println(spotify.lastError.c_str());
+        return;
+      }
       if (cmd.length() >= 2 && cmd[0] == 'd') {
         const String v = cmd.substring(1);
         bool ok = !v.isEmpty();
@@ -2186,7 +2591,7 @@ void handleSerialCommands() {
         Serial.println("use d<0-255>"); return;
       }
       if (cmd == "help" || cmd == "?") {
-        Serial.println("commands: clock|c, weather|w, port, music|m, toggle|t, up|^, down|v, left|<, right|>, refresh|r, d<0-255>, show <name>, hide, help|?");
+        Serial.println("commands: clock|c, weather|w, port, music|m, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, d<0-255>, show <name>, hide, help|?");
         return;
       }
       Serial.printf("unknown: %s\n", cmd.c_str());
@@ -2195,6 +2600,16 @@ void handleSerialCommands() {
     if (serialCommandBuffer.length() < 64) serialCommandBuffer += ch;
     else { serialCommandBuffer = ""; Serial.println("cmd too long"); return; }
   }
+}
+
+void tickSpotify() {
+  if (!spotifyConfigured()) return;
+  const unsigned long now = millis();
+  if (now - spotify.lastFetchMs < SPOTIFY_REFRESH_MS) {
+    if (spotify.valid && currentScreen == ScreenIndex::Music) updateMusicProgress();
+    return;
+  }
+  fetchSpotifyPlayback();
 }
 
 // ---------------------------------------------------------------------------
@@ -2286,7 +2701,9 @@ void tickMusic() {
   const unsigned long now = millis();
 
   // Advance playback once per second when playing.
-  if (musicIsPlaying) {
+  if (spotify.valid) {
+    if (currentScreen == ScreenIndex::Music) updateMusicProgress();
+  } else if (musicIsPlaying) {
     if (now - musicLastTickMs >= 1000UL) {
       const unsigned long stepSec = (now - musicLastTickMs) / 1000UL;
       musicLastTickMs += stepSec * 1000UL;
@@ -2317,7 +2734,7 @@ void tickMusic() {
 
   for (int i = 0; i < kMusicSoundbarCount; ++i) {
     int h;
-    if (musicIsPlaying) {
+    if (musicCurrentlyPlaying()) {
       // Pseudo-random oscillation using a per-bar phase advanced each tick.
       // Three detuned sinusoids summed → a lively bouncing pattern without
       // needing real audio data.
@@ -2413,8 +2830,9 @@ void setup() {
   updateWeatherUi();
   updatePortraitClockUi();
 
-  Serial.println("UI ready. Commands: clock|c, weather|w, port, music|m, toggle|t, up|^, down|v, left|<, right|>, refresh|r, d<0-255>, show <name>, hide, help");
+  Serial.println("UI ready. Commands: clock|c, weather|w, port, music|m, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, d<0-255>, show <name>, hide, help");
   fetchWeather();
+  fetchSpotifyPlayback();
 }
 
 void loop() {
@@ -2424,6 +2842,7 @@ void loop() {
   tickColonBlink();
   tickAutoRotate();
   tickMusic();
+  tickSpotify();
   tickLinkState();
 
   if ((WiFi.status() != WL_CONNECTED && (now - lastWeatherAttempt) >= WIFI_RETRY_MS) ||

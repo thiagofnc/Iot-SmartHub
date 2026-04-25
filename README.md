@@ -29,8 +29,34 @@ build_flags =
 
 6. Create your local app settings file before building.
    - Copy `Screen Code/Screen-pIO/include/AppConfig.example.h` to `Screen Code/Screen-pIO/include/AppConfig.h`
-   - Fill in your own Wi-Fi name, password, OpenWeather API key, location, and units
+   - Fill in your own Wi-Fi name, password, OpenWeather API key, location, units, and Spotify values
    - `AppConfig.h` is gitignored, so your private values stay off GitHub
+
+## Spotify Setup
+
+The music screen uses Spotify's Web API to read the currently playing track,
+show album art, and send play/pause/next/previous commands to your active
+Spotify device. It does not stream Spotify audio on the ESP32.
+
+In `Screen Code/Screen-pIO/include/AppConfig.h`, set:
+
+```cpp
+constexpr char SPOTIFY_CLIENT_ID[] = "your client id";
+constexpr char SPOTIFY_CLIENT_SECRET[] = "your client secret";
+constexpr char SPOTIFY_REFRESH_TOKEN[] = "your refresh token";
+constexpr char SPOTIFY_MARKET[] = "US";
+constexpr char SPOTIFY_DEVICE_ID[] = "";
+```
+
+Generate the refresh token with these scopes:
+
+```text
+user-read-currently-playing user-read-playback-state user-modify-playback-state
+```
+
+Leave `SPOTIFY_DEVICE_ID` empty to control the currently active Spotify
+Connect device. Spotify playback-control endpoints require a Spotify Premium
+account and an active player.
 
 ## Repo Notes
 
