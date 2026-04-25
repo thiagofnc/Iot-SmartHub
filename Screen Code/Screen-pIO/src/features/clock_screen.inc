@@ -122,63 +122,42 @@ void buildClockScreen(lv_obj_t *parent) {
   lv_obj_align(clockUi.glanceCond, LV_ALIGN_TOP_RIGHT, 0, 130);
 
   // Now Playing card
-  lv_obj_t *np = makeGlass(clockUi.root, SCREEN_WIDTH - 80, 76, 16);
+  lv_obj_t *np = makeGlass(clockUi.root, SCREEN_WIDTH - 80, 72, 34);
   lv_obj_set_pos(np, 40, SCREEN_HEIGHT - 130);
+  lv_obj_set_style_bg_opa(np, LV_OPA_70, 0);
+  lv_obj_set_style_border_color(np, hex(COL_ACCENT_SOFT), 0);
+  lv_obj_set_style_border_opa(np, LV_OPA_60, 0);
+  lv_obj_set_style_shadow_width(np, 18, 0);
+  lv_obj_set_style_shadow_ofs_y(np, 3, 0);
 
-  // album art — gradient disc
+  // Compact audio badge, matching the portrait clock widget.
   lv_obj_t *album = makePlain(np);
-  lv_obj_set_size(album, 56, 56);
-  lv_obj_set_style_bg_color(album, hex(0xB85C3A), 0);
-  lv_obj_set_style_bg_grad_color(album, hex(0x6B3A7A), 0);
-  lv_obj_set_style_bg_grad_dir(album, LV_GRAD_DIR_VER, 0);
+  lv_obj_set_size(album, 48, 48);
+  lv_obj_set_style_radius(album, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(album, hex(0x153A55), 0);
   lv_obj_set_style_bg_opa(album, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(album, 10, 0);
-  lv_obj_set_pos(album, 10, 10);
+  lv_obj_set_pos(album, 16, 12);
 
-  // faux record hole
-  lv_obj_t *hole = makePlain(album);
-  lv_obj_set_size(hole, 10, 10);
-  lv_obj_set_style_radius(hole, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_bg_color(hole, hex(0x000000), 0);
-  lv_obj_set_style_bg_opa(hole, LV_OPA_60, 0);
-  lv_obj_align(hole, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_t *musicIcon = makeLabel(album, LV_SYMBOL_AUDIO, &lv_font_montserrat_20, COL_INK_2);
+  lv_obj_center(musicIcon);
 
   clockUi.nowPlayingTitle = makeLabel(np, "Resonance - Extended Mix", &lv_font_montserrat_14, COL_INK);
-  lv_obj_set_pos(clockUi.nowPlayingTitle, 82, 14);
+  lv_label_set_long_mode(clockUi.nowPlayingTitle, LV_LABEL_LONG_CLIP);
+  lv_obj_set_size(clockUi.nowPlayingTitle, 490, 18);
+  lv_obj_set_pos(clockUi.nowPlayingTitle, 88, 17);
 
-  clockUi.nowPlayingArtist = makeLabel(np, "HOME  Odyssey", &lv_font_montserrat_12, COL_INK_3);
-  lv_obj_set_pos(clockUi.nowPlayingArtist, 82, 40);
+  clockUi.nowPlayingArtist = makeLabel(np, "HOME  \xE2\x80\xA2  Odyssey", &lv_font_montserrat_12, COL_INK_3);
+  lv_label_set_long_mode(clockUi.nowPlayingArtist, LV_LABEL_LONG_CLIP);
+  lv_obj_set_size(clockUi.nowPlayingArtist, 470, 16);
+  lv_obj_set_pos(clockUi.nowPlayingArtist, 88, 40);
 
-  // Player controls (non-interactive mock)
-  const int ctrlY = 20;
-  const int ctrlBaseX = SCREEN_WIDTH - 80 - 150;
-  // prev
-  lv_obj_t *prev = makePlain(np);
-  lv_obj_set_size(prev, 36, 36);
-  lv_obj_set_pos(prev, ctrlBaseX, ctrlY);
-  lv_obj_set_style_radius(prev, 8, 0);
-  lv_obj_set_style_bg_opa(prev, LV_OPA_0, 0);
-  lv_obj_t *prevL = makeLabel(prev, LV_SYMBOL_PREV, &lv_font_montserrat_18, COL_INK_2);
-  lv_obj_center(prevL);
-
-  // play (accent pill)
-  lv_obj_t *play = makePlain(np);
-  lv_obj_set_size(play, 36, 36);
-  lv_obj_set_pos(play, ctrlBaseX + 44, ctrlY);
-  lv_obj_set_style_radius(play, 8, 0);
-  lv_obj_set_style_bg_color(play, hex(COL_ACCENT), 0);
-  lv_obj_set_style_bg_opa(play, LV_OPA_COVER, 0);
-  lv_obj_t *playL = makeLabel(play, LV_SYMBOL_PLAY, &lv_font_montserrat_16, COL_BG_0);
-  lv_obj_center(playL);
-
-  // next
-  lv_obj_t *next = makePlain(np);
-  lv_obj_set_size(next, 36, 36);
-  lv_obj_set_pos(next, ctrlBaseX + 88, ctrlY);
-  lv_obj_set_style_radius(next, 8, 0);
-  lv_obj_set_style_bg_opa(next, LV_OPA_0, 0);
-  lv_obj_t *nextL = makeLabel(next, LV_SYMBOL_NEXT, &lv_font_montserrat_18, COL_INK_2);
-  lv_obj_center(nextL);
+  const int ctrlX = SCREEN_WIDTH - 80 - 126;
+  lv_obj_t *prev = makeLabel(np, LV_SYMBOL_PREV, &lv_font_montserrat_14, COL_INK_2);
+  lv_obj_set_pos(prev, ctrlX, 28);
+  lv_obj_t *play = makeLabel(np, LV_SYMBOL_PLAY, &lv_font_montserrat_12, COL_INK);
+  lv_obj_set_pos(play, ctrlX + 40, 29);
+  lv_obj_t *next = makeLabel(np, LV_SYMBOL_NEXT, &lv_font_montserrat_14, COL_INK_2);
+  lv_obj_set_pos(next, ctrlX + 78, 28);
 }
 
 // ---------------------------------------------------------------------------
