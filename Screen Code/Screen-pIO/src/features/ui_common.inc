@@ -301,7 +301,9 @@ void refreshPageDots() {
   styleDot(pageDotClock, currentScreen == ScreenIndex::Clock, LV_ALIGN_LEFT_MID, 14);
   styleDot(pageDotWeather, currentScreen == ScreenIndex::Weather, LV_ALIGN_LEFT_MID, 48);
   styleDot(pageDotPortrait, currentScreen == ScreenIndex::Portrait, LV_ALIGN_RIGHT_MID, -48);
-  styleDot(pageDotBattery, currentScreen == ScreenIndex::Battery, LV_ALIGN_RIGHT_MID, -14);
+  styleDot(pageDotBattery,
+           currentScreen == ScreenIndex::Battery || currentScreen == ScreenIndex::BatteryPortrait,
+           LV_ALIGN_RIGHT_MID, -14);
 }
 
 // ---------------------------------------------------------------------------

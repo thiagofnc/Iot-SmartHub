@@ -144,6 +144,7 @@ struct BatteryUi {
   lv_obj_t *updated = nullptr;
   BatteryGaugeUi gauges[kBatteryDeviceCount];
 } batteryUi;
+BatteryUi batteryPortraitUi;
 
 // ---------------------------------------------------------------------------
 // State

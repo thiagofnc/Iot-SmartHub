@@ -6,9 +6,9 @@ uint32_t batteryColorForPercent(int percent) {
   return 0x38EF7D;
 }
 
-void updateBatteryGauge(int index) {
+void updateBatteryGaugeUi(BatteryUi &screen, int index) {
   if (index < 0 || index >= kBatteryDeviceCount) return;
-  BatteryGaugeUi &ui = batteryUi.gauges[index];
+  BatteryGaugeUi &ui = screen.gauges[index];
   if (!ui.arc) return;
 
   const int percent = constrain(batteryDevices[index].percent, 0, 100);
@@ -23,10 +23,15 @@ void updateBatteryGauge(int index) {
   lv_label_set_text(ui.icon, batteryDevices[index].icon);
 }
 
+void updateBatteryGauge(int index) {
+  updateBatteryGaugeUi(batteryUi, index);
+  updateBatteryGaugeUi(batteryPortraitUi, index);
+}
+
 void updateBatteryUi() {
-  if (!batteryUi.root) return;
   for (int i = 0; i < kBatteryDeviceCount; ++i) updateBatteryGauge(i);
-  lv_label_set_text(batteryUi.updated, "SERIAL INPUT");
+  if (batteryUi.updated) lv_label_set_text(batteryUi.updated, "SERIAL INPUT");
+  if (batteryPortraitUi.updated) lv_label_set_text(batteryPortraitUi.updated, "SERIAL INPUT");
 }
 
 bool setDeviceBattery(int deviceNumber, int percent) {
@@ -34,16 +39,17 @@ bool setDeviceBattery(int deviceNumber, int percent) {
   if (percent < 0 || percent > 100) return false;
   batteryDevices[deviceNumber - 1].percent = percent;
   updateBatteryGauge(deviceNumber - 1);
-  lv_label_set_text(batteryUi.updated, "UPDATED FROM SERIAL");
+  if (batteryUi.updated) lv_label_set_text(batteryUi.updated, "UPDATED FROM SERIAL");
+  if (batteryPortraitUi.updated) lv_label_set_text(batteryPortraitUi.updated, "UPDATED FROM SERIAL");
   return true;
 }
 
-lv_obj_t *makeBatteryGauge(lv_obj_t *parent, int index, int x, int y) {
+lv_obj_t *makeBatteryGauge(BatteryUi &screen, lv_obj_t *parent, int index, int x, int y) {
   lv_obj_t *tile = makePlain(parent);
   lv_obj_set_size(tile, 304, 132);
   lv_obj_set_pos(tile, x, y);
 
-  BatteryGaugeUi &ui = batteryUi.gauges[index];
+  BatteryGaugeUi &ui = screen.gauges[index];
 
   ui.name = makeLabel(tile, batteryDevices[index].name, &lv_font_montserrat_12, COL_INK_3);
   lv_obj_set_style_text_align(ui.name, LV_TEXT_ALIGN_CENTER, 0);
@@ -73,7 +79,56 @@ lv_obj_t *makeBatteryGauge(lv_obj_t *parent, int index, int x, int y) {
   lv_obj_set_width(ui.value, 82);
   lv_obj_align(ui.value, LV_ALIGN_TOP_MID, 0, 110);
 
-  updateBatteryGauge(index);
+  updateBatteryGaugeUi(screen, index);
+  return tile;
+}
+
+lv_obj_t *makeBatteryGaugePortrait(BatteryUi &screen, lv_obj_t *parent, int index, int x, int y) {
+  lv_obj_t *tile = makePlain(parent);
+  lv_obj_set_size(tile, 388, 118);
+  lv_obj_set_pos(tile, x, y);
+
+  BatteryGaugeUi &ui = screen.gauges[index];
+
+  ui.icon = makeLabel(tile, batteryDevices[index].icon, &lv_font_montserrat_20, COL_INK);
+  lv_obj_set_size(ui.icon, 42, 42);
+  lv_obj_set_style_text_align(ui.icon, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(ui.icon, LV_ALIGN_LEFT_MID, 18, -2);
+
+  ui.name = makeLabel(tile, batteryDevices[index].name, &lv_font_montserrat_12, COL_INK_3);
+  lv_obj_set_style_text_letter_space(ui.name, 2, 0);
+  lv_obj_set_width(ui.name, 116);
+  lv_obj_align(ui.name, LV_ALIGN_LEFT_MID, 76, -18);
+
+  ui.value = makeLabel(tile, "0", &lv_font_montserrat_22, COL_INK);
+  lv_obj_set_style_text_align(ui.value, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_set_width(ui.value, 72);
+  lv_obj_align(ui.value, LV_ALIGN_LEFT_MID, 76, 14);
+
+  lv_obj_t *pct = makeLabel(tile, "%", &lv_font_montserrat_12, COL_INK_3);
+  lv_obj_align_to(pct, ui.value, LV_ALIGN_OUT_RIGHT_BOTTOM, 2, -2);
+
+  ui.arc = lv_arc_create(tile);
+  lv_obj_remove_style(ui.arc, nullptr, LV_PART_KNOB);
+  lv_obj_clear_flag(ui.arc, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(ui.arc, 90, 90);
+  lv_obj_align(ui.arc, LV_ALIGN_RIGHT_MID, -22, 0);
+  lv_arc_set_range(ui.arc, 0, 100);
+  lv_arc_set_rotation(ui.arc, 135);
+  lv_arc_set_bg_angles(ui.arc, 0, 270);
+  lv_obj_set_style_arc_width(ui.arc, 8, LV_PART_MAIN);
+  lv_obj_set_style_arc_color(ui.arc, hex(COL_RAIL_BG), LV_PART_MAIN);
+  lv_obj_set_style_arc_opa(ui.arc, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(ui.arc, 8, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_rounded(ui.arc, true, LV_PART_INDICATOR);
+
+  lv_obj_t *divider = makePlain(tile);
+  lv_obj_set_size(divider, 300, 1);
+  lv_obj_align(divider, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_set_style_bg_color(divider, hex(COL_GLASS_STROKE), 0);
+  lv_obj_set_style_bg_opa(divider, index == kBatteryDeviceCount - 1 ? LV_OPA_TRANSP : LV_OPA_70, 0);
+
+  updateBatteryGaugeUi(screen, index);
   return tile;
 }
 
@@ -104,10 +159,49 @@ void buildBatteryScreen(lv_obj_t *parent) {
   lv_obj_t *panel = makeGlass(batteryUi.root, panelW, panelH, 22);
   lv_obj_set_pos(panel, 40, 92);
 
-  makeBatteryGauge(panel, 0, 48, 32);
-  makeBatteryGauge(panel, 1, 368, 32);
-  makeBatteryGauge(panel, 2, 48, 184);
-  makeBatteryGauge(panel, 3, 368, 184);
+  makeBatteryGauge(batteryUi, panel, 0, 48, 32);
+  makeBatteryGauge(batteryUi, panel, 1, 368, 32);
+  makeBatteryGauge(batteryUi, panel, 2, 48, 184);
+  makeBatteryGauge(batteryUi, panel, 3, 368, 184);
+}
+
+void buildBatteryPortraitScreen(lv_obj_t *parent) {
+  batteryPortraitUi.root = makePlain(parent);
+  lv_obj_set_size(batteryPortraitUi.root, PORTRAIT_WIDTH, PORTRAIT_HEIGHT);
+  lv_obj_set_pos(batteryPortraitUi.root, 0, 0);
+  lv_obj_add_flag(batteryPortraitUi.root, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_style_bg_color(batteryPortraitUi.root, hex(COL_BG_1), 0);
+  lv_obj_set_style_bg_opa(batteryPortraitUi.root, LV_OPA_COVER, 0);
+
+  ambientBlob(batteryPortraitUi.root, 70, 148, 260, COL_AMB_TEAL, LV_OPA_30);
+  ambientBlob(batteryPortraitUi.root, 430, 520, 300, COL_AMB_PURPLE, LV_OPA_20);
+
+  buildStatusRow(batteryPortraitUi.root, batteryPortraitUi.status, "CONNECTING", "--");
+  batteryPortraitUi.updated = batteryPortraitUi.status.rightInfo;
+
+  lv_obj_t *eyebrowBar = makePlain(batteryPortraitUi.root);
+  lv_obj_set_size(eyebrowBar, 22, 2);
+  lv_obj_set_pos(eyebrowBar, 36, 72);
+  lv_obj_set_style_bg_color(eyebrowBar, hex(COL_ACCENT), 0);
+  lv_obj_set_style_bg_opa(eyebrowBar, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(eyebrowBar, 1, 0);
+
+  lv_obj_t *eyebrow = makeLabel(batteryPortraitUi.root, "BATTERY LEVELS", &lv_font_montserrat_12, COL_ACCENT);
+  lv_obj_set_style_text_letter_space(eyebrow, 2, 0);
+  lv_obj_set_pos(eyebrow, 68, 65);
+
+  lv_obj_t *title = makeLabel(batteryPortraitUi.root, "Devices", &lv_font_montserrat_28, COL_INK);
+  lv_obj_set_pos(title, 36, 96);
+
+  const int panelW = PORTRAIT_WIDTH - 56;
+  const int panelH = 536;
+  lv_obj_t *panel = makeGlass(batteryPortraitUi.root, panelW, panelH, 22);
+  lv_obj_set_pos(panel, 28, 168);
+
+  makeBatteryGaugePortrait(batteryPortraitUi, panel, 0, 18, 34);
+  makeBatteryGaugePortrait(batteryPortraitUi, panel, 1, 18, 158);
+  makeBatteryGaugePortrait(batteryPortraitUi, panel, 2, 18, 282);
+  makeBatteryGaugePortrait(batteryPortraitUi, panel, 3, 18, 406);
 }
 
 // ---------------------------------------------------------------------------
