@@ -116,11 +116,19 @@ bool spotifyJpgOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bi
 }
 
 void spotifyShowFallbackCover() {
+  if (kMusicCoverSource == MusicCoverSource::SdCard) {
+    ensureMusicCover();
+    return;
+  }
   if (musicUi.albumCanvas) lv_obj_add_flag(musicUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
   if (musicPortraitUi.albumCanvas) lv_obj_add_flag(musicPortraitUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
 }
 
 bool spotifyLoadAlbumCover(const String &imageUrl) {
+  if (kMusicCoverSource == MusicCoverSource::SdCard) {
+    ensureMusicCover();
+    return true;
+  }
   if (imageUrl.isEmpty() || imageUrl == spotify.coverLoadedUrl) return true;
   if (WiFi.status() != WL_CONNECTED) return false;
 

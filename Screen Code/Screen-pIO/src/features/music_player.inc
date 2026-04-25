@@ -12,6 +12,20 @@ constexpr uint32_t kSoundbarPalette[] = {
 };
 constexpr int kSoundbarPaletteCount = sizeof(kSoundbarPalette) / sizeof(kSoundbarPalette[0]);
 constexpr const char *kMusicBackgroundImageName = "music_back";
+enum class MusicCoverSource {
+  SdCard,
+  Spotify,
+};
+// Change this to MusicCoverSource::Spotify to go back to live Spotify art.
+constexpr MusicCoverSource kMusicCoverSource = MusicCoverSource::SdCard;
+// Change this one value to use a different SD-card cover image.
+// The file must live in /images and use raw RGB565 .bin format.
+constexpr const char *kMusicCoverImageName = "music_cover";
+constexpr size_t kMusicCoverBytes = kSpotifyCoverSize * kSpotifyCoverSize * sizeof(lv_color_t);
+
+const char *musicCoverSourceName() {
+  return kMusicCoverSource == MusicCoverSource::SdCard ? "sd-card" : "spotify";
+}
 
 String musicFormatTime(int totalSec) {
   if (totalSec < 0) totalSec = 0;
@@ -176,6 +190,129 @@ bool loadMusicBackgroundFromSd() {
   }
   f.close();
   Serial.printf("Music background loaded: %s\n", kMusicBackgroundImageName);
+  return true;
+}
+
+bool readMusicCoverPixels(File &f, lv_color_t *buffer) {
+  uint8_t *dst = reinterpret_cast<uint8_t *>(buffer);
+  size_t remaining = kMusicCoverBytes;
+  while (remaining > 0) {
+    const size_t chunk = remaining > 4096 ? 4096 : remaining;
+    const int read = f.read(dst, chunk);
+    if (read <= 0) return false;
+    for (int i = 0; i + 1 < read; i += 2) {
+      const uint8_t t = dst[i];
+      dst[i] = dst[i + 1];
+      dst[i + 1] = t;
+    }
+    dst += read;
+    remaining -= read;
+  }
+  return true;
+}
+
+bool readMusicCoverFromFullscreenImage(File &f, lv_color_t *buffer) {
+  const int srcX = (SCREEN_WIDTH - kSpotifyCoverSize) / 2;
+  const int srcY = (SCREEN_HEIGHT - kSpotifyCoverSize) / 2;
+  for (int y = 0; y < kSpotifyCoverSize; ++y) {
+    const uint32_t offset = ((srcY + y) * SCREEN_WIDTH + srcX) * sizeof(lv_color_t);
+    if (!f.seek(offset)) return false;
+    uint8_t *row = reinterpret_cast<uint8_t *>(buffer + y * kSpotifyCoverSize);
+    const int expected = kSpotifyCoverSize * sizeof(lv_color_t);
+    const int read = f.read(row, expected);
+    if (read != expected) return false;
+    for (int i = 0; i + 1 < read; i += 2) {
+      const uint8_t t = row[i];
+      row[i] = row[i + 1];
+      row[i + 1] = t;
+    }
+  }
+  return true;
+}
+
+bool loadMusicCoverFromSd() {
+  if (kMusicCoverSource != MusicCoverSource::SdCard) {
+    Serial.printf("Music cover: source is %s, SD cover load skipped\n",
+                  musicCoverSourceName());
+    return false;
+  }
+  if (musicCoverBuffer) {
+    Serial.printf("Music cover already loaded: /images/%s.bin\n", kMusicCoverImageName);
+    return true;
+  }
+
+  Serial.printf("Music cover: loading /images/%s.bin\n", kMusicCoverImageName);
+  if (!sdReady) {
+    Serial.println("Music cover skipped: SD not available");
+    return false;
+  }
+
+  String path = "/images/";
+  path += kMusicCoverImageName;
+  path += ".bin";
+
+  File f = SD.open(path.c_str(), FILE_READ);
+  if (!f) {
+    Serial.printf("Music cover open failed: %s\n", path.c_str());
+    return false;
+  }
+
+  const size_t fileSize = (size_t)f.size();
+  const bool squareCover = fileSize == kMusicCoverBytes;
+  const bool fullscreenImage = fileSize == SD_IMAGE_BYTES;
+  if (!squareCover && !fullscreenImage) {
+    Serial.printf("Music cover size mismatch: %s is %u bytes, expected %u or %u\n",
+                  path.c_str(), (unsigned)fileSize, (unsigned)kMusicCoverBytes,
+                  (unsigned)SD_IMAGE_BYTES);
+    Serial.printf("Music cover must be raw RGB565 at %ux%u or %ux%u pixels\n",
+                  kSpotifyCoverSize, kSpotifyCoverSize, SCREEN_WIDTH, SCREEN_HEIGHT);
+    f.close();
+    return false;
+  }
+
+  musicCoverBuffer = static_cast<lv_color_t *>(
+      heap_caps_malloc(kMusicCoverBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!musicCoverBuffer) {
+    musicCoverBuffer = static_cast<lv_color_t *>(
+        heap_caps_malloc(kMusicCoverBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  }
+  if (!musicCoverBuffer) {
+    Serial.println("Music cover buffer alloc failed");
+    f.close();
+    return false;
+  }
+
+  const bool ok = squareCover ? readMusicCoverPixels(f, musicCoverBuffer)
+                              : readMusicCoverFromFullscreenImage(f, musicCoverBuffer);
+  f.close();
+  if (!ok) {
+    Serial.println("Music cover read failed");
+    heap_caps_free(musicCoverBuffer);
+    musicCoverBuffer = nullptr;
+    return false;
+  }
+
+  Serial.printf("Music cover loaded: %s\n", kMusicCoverImageName);
+  return true;
+}
+
+void applyMusicCoverToUi(MusicUi &ui) {
+  if (!ui.albumCanvas || !musicCoverBuffer) return;
+  lv_canvas_set_buffer(ui.albumCanvas, musicCoverBuffer,
+                       kSpotifyCoverSize, kSpotifyCoverSize, LV_IMG_CF_TRUE_COLOR);
+  lv_obj_clear_flag(ui.albumCanvas, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool ensureMusicCover() {
+  Serial.printf("Music cover: source=%s\n", musicCoverSourceName());
+  if (kMusicCoverSource != MusicCoverSource::SdCard) return false;
+  if (!loadMusicCoverFromSd()) {
+    Serial.println("Music cover: inactive");
+    return false;
+  }
+  applyMusicCoverToUi(musicUi);
+  applyMusicCoverToUi(musicPortraitUi);
+  Serial.println("Music cover: active");
   return true;
 }
 
@@ -498,6 +635,8 @@ void buildMusicScreen(lv_obj_t *parent) {
   musicUi.repeatBtn = makeMusicSecondaryBtn(musicUi.root, smallSize, LV_SYMBOL_LOOP,
                                             &lv_font_montserrat_18, COL_INK_2);
   lv_obj_set_pos(musicUi.repeatBtn, x, midY - smallSize / 2);
+
+  ensureMusicCover();
 }
 
 void buildMusicPortraitScreen(lv_obj_t *parent) {
@@ -705,6 +844,8 @@ void buildMusicPortraitScreen(lv_obj_t *parent) {
                                                     LV_SYMBOL_LOOP,
                                                     &lv_font_montserrat_18, COL_INK_2);
   lv_obj_set_pos(musicPortraitUi.repeatBtn, 394, ctrlY + (playSize - smallSize) / 2);
+
+  ensureMusicCover();
 }
 
 void updateMusicProgressUi(MusicUi &ui) {

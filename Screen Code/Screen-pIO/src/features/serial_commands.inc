@@ -84,6 +84,10 @@ void handleSerialCommands() {
         else Serial.println(spotify.lastError.c_str());
         return;
       }
+      if (cmd == "cover") {
+        ensureMusicCover();
+        return;
+      }
       if (cmd.startsWith("dev")) {
         int pos = 3;
         while (pos < (int)cmd.length() && isdigit((unsigned char)cmd[pos])) ++pos;

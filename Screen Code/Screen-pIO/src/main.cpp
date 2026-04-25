@@ -265,6 +265,7 @@ void showScreen(ScreenIndex s, int direction = 0) {
   applyScreenOrientation(s);
   if (isMusicScreen(s)) {
     ensureMusicBackground();
+    ensureMusicCover();
   }
 
   lv_obj_t *incoming = rootForScreen(s);
