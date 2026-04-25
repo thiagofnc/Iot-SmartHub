@@ -203,16 +203,8 @@ bool spotifyLoadAlbumCover(const String &imageUrl) {
   spotifyCoverDsc.header.cf = LV_IMG_CF_TRUE_COLOR;
   spotifyCoverDsc.data_size = kSpotifyCoverSize * kSpotifyCoverSize * sizeof(lv_color_t);
   spotifyCoverDsc.data = reinterpret_cast<const uint8_t *>(spotifyCoverBuffer);
-  if (musicUi.albumCanvas) {
-    lv_canvas_set_buffer(musicUi.albumCanvas, spotifyCoverBuffer,
-                         kSpotifyCoverSize, kSpotifyCoverSize, LV_IMG_CF_TRUE_COLOR);
-    lv_obj_clear_flag(musicUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
-  }
-  if (musicPortraitUi.albumCanvas) {
-    lv_canvas_set_buffer(musicPortraitUi.albumCanvas, spotifyCoverBuffer,
-                         kSpotifyCoverSize, kSpotifyCoverSize, LV_IMG_CF_TRUE_COLOR);
-    lv_obj_clear_flag(musicPortraitUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
-  }
+  applyMusicCoverBufferToUi(musicUi, spotifyCoverBuffer);
+  applyMusicCoverBufferToUi(musicPortraitUi, spotifyCoverBuffer);
   spotify.coverLoadedUrl = imageUrl;
   return true;
 }

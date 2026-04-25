@@ -296,11 +296,21 @@ bool loadMusicCoverFromSd() {
   return true;
 }
 
-void applyMusicCoverToUi(MusicUi &ui) {
-  if (!ui.albumCanvas || !musicCoverBuffer) return;
-  lv_canvas_set_buffer(ui.albumCanvas, musicCoverBuffer,
+void applyMusicCoverBufferToUi(MusicUi &ui, lv_color_t *buffer) {
+  if (!ui.albumCanvas || !ui.album || !buffer) return;
+  const int coverSize = lv_obj_get_width(ui.album);
+  lv_canvas_set_buffer(ui.albumCanvas, buffer,
                        kSpotifyCoverSize, kSpotifyCoverSize, LV_IMG_CF_TRUE_COLOR);
+  lv_img_set_pivot(ui.albumCanvas, 0, 0);
+  lv_img_set_zoom(ui.albumCanvas,
+                  (uint16_t)((coverSize * 256 + kSpotifyCoverSize / 2) / kSpotifyCoverSize));
+  lv_obj_set_size(ui.albumCanvas, coverSize, coverSize);
+  lv_obj_set_pos(ui.albumCanvas, 0, 0);
   lv_obj_clear_flag(ui.albumCanvas, LV_OBJ_FLAG_HIDDEN);
+}
+
+void applyMusicCoverToUi(MusicUi &ui) {
+  applyMusicCoverBufferToUi(ui, musicCoverBuffer);
 }
 
 bool ensureMusicCover() {
@@ -689,9 +699,8 @@ void buildMusicPortraitScreen(lv_obj_t *parent) {
 
   musicPortraitUi.albumCanvas = lv_canvas_create(musicPortraitUi.album);
   lv_obj_remove_style_all(musicPortraitUi.albumCanvas);
-  lv_obj_set_size(musicPortraitUi.albumCanvas, kSpotifyCoverSize, kSpotifyCoverSize);
-  lv_obj_set_pos(musicPortraitUi.albumCanvas, (albumSize - kSpotifyCoverSize) / 2,
-                 (albumSize - kSpotifyCoverSize) / 2);
+  lv_obj_set_size(musicPortraitUi.albumCanvas, albumSize, albumSize);
+  lv_obj_set_pos(musicPortraitUi.albumCanvas, 0, 0);
   lv_obj_add_flag(musicPortraitUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
 
   musicPortraitUi.albumCounter = makeLabel(musicPortraitUi.album,
