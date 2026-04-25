@@ -3,6 +3,9 @@
 void connectWifiIfNeeded() {
   if (WiFi.status() == WL_CONNECTED) return;
   weatherData.lastError = "CONNECTING WI-FI";
+  wifiConnectInProgress = true;
+  updateWifiStatusIndicator(WifiIndicatorState::Connecting);
+  lastRenderedWifiStatus = static_cast<int>(WifiIndicatorState::Connecting);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   const unsigned long start = millis();
@@ -16,6 +19,10 @@ void connectWifiIfNeeded() {
   } else {
     weatherData.lastError = "WI-FI UNAVAILABLE";
   }
+  wifiConnectInProgress = false;
+  const WifiIndicatorState wifi = currentWifiIndicatorState();
+  updateWifiStatusIndicator(wifi);
+  lastRenderedWifiStatus = static_cast<int>(wifi);
 }
 
 void showStartupIconPreview(lv_obj_t *parent) {

@@ -244,10 +244,11 @@ void buildStatusRow(lv_obj_t *parent, StatusRow &out, const char *leftText, cons
 lv_obj_t *pageDotClock = nullptr;
 lv_obj_t *pageDotWeather = nullptr;
 lv_obj_t *pageDotPortrait = nullptr;
+lv_obj_t *pageDotBattery = nullptr;
 
 lv_obj_t *buildPageDots(lv_obj_t *parent) {
   lv_obj_t *pill = makePlain(parent);
-  lv_obj_set_size(pill, 96, 20);
+  lv_obj_set_size(pill, 126, 20);
   lv_obj_set_style_bg_color(pill, hex(0x000000), 0);
   lv_obj_set_style_bg_opa(pill, LV_OPA_40, 0);
   lv_obj_set_style_radius(pill, 10, 0);
@@ -268,20 +269,27 @@ lv_obj_t *buildPageDots(lv_obj_t *parent) {
   lv_obj_set_style_radius(pageDotWeather, 3, 0);
   lv_obj_set_style_bg_color(pageDotWeather, hex(0xFFFFFF), 0);
   lv_obj_set_style_bg_opa(pageDotWeather, LV_OPA_30, 0);
-  lv_obj_align(pageDotWeather, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_align(pageDotWeather, LV_ALIGN_LEFT_MID, 48, 0);
 
   pageDotPortrait = makePlain(pill);
   lv_obj_set_size(pageDotPortrait, 6, 6);
   lv_obj_set_style_radius(pageDotPortrait, 3, 0);
   lv_obj_set_style_bg_color(pageDotPortrait, hex(0xFFFFFF), 0);
   lv_obj_set_style_bg_opa(pageDotPortrait, LV_OPA_30, 0);
-  lv_obj_align(pageDotPortrait, LV_ALIGN_RIGHT_MID, -14, 0);
+  lv_obj_align(pageDotPortrait, LV_ALIGN_RIGHT_MID, -48, 0);
+
+  pageDotBattery = makePlain(pill);
+  lv_obj_set_size(pageDotBattery, 6, 6);
+  lv_obj_set_style_radius(pageDotBattery, 3, 0);
+  lv_obj_set_style_bg_color(pageDotBattery, hex(0xFFFFFF), 0);
+  lv_obj_set_style_bg_opa(pageDotBattery, LV_OPA_30, 0);
+  lv_obj_align(pageDotBattery, LV_ALIGN_RIGHT_MID, -14, 0);
 
   return pill;
 }
 
 void refreshPageDots() {
-  if (!pageDotClock || !pageDotWeather || !pageDotPortrait) return;
+  if (!pageDotClock || !pageDotWeather || !pageDotPortrait || !pageDotBattery) return;
 
   auto styleDot = [](lv_obj_t *dot, bool active, lv_align_t align, lv_coord_t x_ofs) {
     lv_obj_set_size(dot, active ? 22 : 6, 6);
@@ -291,8 +299,9 @@ void refreshPageDots() {
   };
 
   styleDot(pageDotClock, currentScreen == ScreenIndex::Clock, LV_ALIGN_LEFT_MID, 14);
-  styleDot(pageDotWeather, currentScreen == ScreenIndex::Weather, LV_ALIGN_CENTER, 0);
-  styleDot(pageDotPortrait, currentScreen == ScreenIndex::Portrait, LV_ALIGN_RIGHT_MID, -14);
+  styleDot(pageDotWeather, currentScreen == ScreenIndex::Weather, LV_ALIGN_LEFT_MID, 48);
+  styleDot(pageDotPortrait, currentScreen == ScreenIndex::Portrait, LV_ALIGN_RIGHT_MID, -48);
+  styleDot(pageDotBattery, currentScreen == ScreenIndex::Battery, LV_ALIGN_RIGHT_MID, -14);
 }
 
 // ---------------------------------------------------------------------------

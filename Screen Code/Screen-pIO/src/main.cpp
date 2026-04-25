@@ -88,9 +88,10 @@ enum class ScreenIndex : int {
   Clock = 0,
   Weather = 1,
   Portrait = 2,
-  Music = 3,    // Reached via "up" from Clock; not part of the swipe carousel.
-  MusicPortrait = 4,
-  Count = 3,    // Count of screens that participate in swipe rotation (Clock/Weather/Portrait).
+  Battery = 3,
+  Music = 4,    // Reached via "up" from Clock; not part of the swipe carousel.
+  MusicPortrait = 5,
+  Count = 4,    // Count of screens that participate in swipe rotation.
 };
 
 CrowPanelDisplay display(DISPLAY_MODEL);
@@ -198,6 +199,7 @@ lv_color_t portraitIconBuf[56 * 56];
 #include "features/clock_screen.inc"
 #include "features/weather_screen.inc"
 #include "features/portrait_screen.inc"
+#include "features/battery_screen.inc"
 #include "features/music_player.inc"
 
 // Screen switching
@@ -220,6 +222,7 @@ lv_obj_t *rootForScreen(ScreenIndex s) {
     case ScreenIndex::Clock: return clockUi.root;
     case ScreenIndex::Weather: return weatherUi.root;
     case ScreenIndex::Portrait: return portraitUi.root;
+    case ScreenIndex::Battery: return batteryUi.root;
     case ScreenIndex::Music: return musicUi.root;
     case ScreenIndex::MusicPortrait: return musicPortraitUi.root;
     default: return clockUi.root;
@@ -231,6 +234,7 @@ const char *screenName(ScreenIndex s) {
     case ScreenIndex::Clock: return "clock";
     case ScreenIndex::Weather: return "weather";
     case ScreenIndex::Portrait: return "port";
+    case ScreenIndex::Battery: return "battery";
     case ScreenIndex::Music: return "music";
     case ScreenIndex::MusicPortrait: return "music-portrait";
     default: return "clock";
@@ -277,7 +281,7 @@ void showScreen(ScreenIndex s, int direction = 0) {
   // Hide the previously-outgoing screen's stale positions from earlier
   // toggles, other than the one we're animating right now.
   lv_obj_t *roots[] = {clockUi.root, weatherUi.root, portraitUi.root,
-                       musicUi.root, musicPortraitUi.root};
+                       batteryUi.root, musicUi.root, musicPortraitUi.root};
   for (lv_obj_t *other : roots) {
     if (other && other != incoming && other != outgoing) {
       lv_obj_add_flag(other, LV_OBJ_FLAG_HIDDEN);
@@ -303,8 +307,7 @@ void toggleScreen() {
 }
 
 // Swipe by logical direction: +1 moves to the next page (content slides left),
-// -1 moves to the previous page (content slides right). Two-screen dashboard
-// wraps around.
+// -1 moves to the previous page (content slides right). The carousel wraps.
 void swipeScreen(int delta) {
   int next = (static_cast<int>(currentScreen) + delta + (int)ScreenIndex::Count)
              % (int)ScreenIndex::Count;
@@ -348,6 +351,7 @@ void updateClockFace() {
 }
 
 enum class LinkState { Online, Offline, NoData };
+enum class WifiIndicatorState { Connected, Connecting, Offline };
 
 LinkState currentLinkState() {
   if (WiFi.status() != WL_CONNECTED) return LinkState::Offline;
@@ -355,21 +359,52 @@ LinkState currentLinkState() {
   return LinkState::Online;
 }
 
-void setStatusRowState(StatusRow &row, LinkState s) {
+WifiIndicatorState currentWifiIndicatorState() {
+  if (WiFi.status() == WL_CONNECTED) return WifiIndicatorState::Connected;
+  if (wifiConnectInProgress) return WifiIndicatorState::Connecting;
+  return WifiIndicatorState::Offline;
+}
+
+const char *wifiIndicatorLabel(WifiIndicatorState s) {
   switch (s) {
-    case LinkState::Online:
+    case WifiIndicatorState::Connected: return "Connected";
+    case WifiIndicatorState::Connecting: return "Connecting";
+    case WifiIndicatorState::Offline: return "Offline";
+  }
+  return "Offline";
+}
+
+void setStatusRowWifiState(StatusRow &row, WifiIndicatorState s) {
+  if (!row.dot) return;
+  switch (s) {
+    case WifiIndicatorState::Connected:
       lv_obj_set_style_bg_color(row.dot, hex(COL_ACCENT), 0);
       lv_obj_set_style_bg_opa(row.dot, LV_OPA_COVER, 0);
       break;
-    case LinkState::Offline:
-      lv_obj_set_style_bg_color(row.dot, hex(0xE06060), 0);
-      lv_obj_set_style_bg_opa(row.dot, LV_OPA_COVER, 0);
-      break;
-    case LinkState::NoData:
+    case WifiIndicatorState::Connecting:
       lv_obj_set_style_bg_color(row.dot, hex(0xE0A040), 0);
       lv_obj_set_style_bg_opa(row.dot, LV_OPA_COVER, 0);
       break;
+    case WifiIndicatorState::Offline:
+      lv_obj_set_style_bg_color(row.dot, hex(0xE06060), 0);
+      lv_obj_set_style_bg_opa(row.dot, LV_OPA_COVER, 0);
+      break;
   }
+}
+
+void updateWifiStatusIndicator(WifiIndicatorState wifi) {
+  setStatusRowWifiState(clockUi.status, wifi);
+  setStatusRowWifiState(weatherUi.status, wifi);
+  setStatusRowWifiState(portraitUi.status, wifi);
+  setStatusRowWifiState(batteryUi.status, wifi);
+  setStatusRowWifiState(musicUi.status, wifi);
+  setStatusRowWifiState(musicPortraitUi.status, wifi);
+
+  const char *label = wifiIndicatorLabel(wifi);
+  if (clockUi.status.connected) lv_label_set_text(clockUi.status.connected, label);
+  if (weatherUi.status.connected) lv_label_set_text(weatherUi.status.connected, label);
+  if (portraitUi.status.connected) lv_label_set_text(portraitUi.status.connected, label);
+  if (batteryUi.status.connected) lv_label_set_text(batteryUi.status.connected, label);
 }
 
 void updateGlanceTile() {
@@ -758,21 +793,16 @@ void tickLinkState() {
   lastLinkRefresh = now;
 
   LinkState link = currentLinkState();
-  if (static_cast<int>(link) == lastRenderedLinkState) return;
+  WifiIndicatorState wifi = currentWifiIndicatorState();
+  if (static_cast<int>(link) == lastRenderedLinkState &&
+      static_cast<int>(wifi) == lastRenderedWifiStatus) {
+    return;
+  }
   lastRenderedLinkState = static_cast<int>(link);
+  lastRenderedWifiStatus = static_cast<int>(wifi);
 
-  setStatusRowState(clockUi.status, link);
-  setStatusRowState(weatherUi.status, link);
-  setStatusRowState(portraitUi.status, link);
-  setStatusRowState(musicUi.status, link);
-  setStatusRowState(musicPortraitUi.status, link);
+  updateWifiStatusIndicator(wifi);
 
-  const char *leftLabel = (link == LinkState::Online)  ? "CONNECTED"
-                        : (link == LinkState::Offline) ? "OFFLINE"
-                                                       : "NO DATA";
-  lv_label_set_text(clockUi.status.connected,   leftLabel);
-  lv_label_set_text(weatherUi.status.connected, leftLabel);
-  lv_label_set_text(portraitUi.status.connected, leftLabel);
   // Music screen keeps its "NOW PLAYING · SPOTIFY" label unchanged — the
   // accent dot + right-hand info already cover link state for that screen.
 
@@ -803,11 +833,14 @@ void setup() {
   buildClockScreen(scr);
   buildWeatherScreen(scr);
   buildPortraitClockScreen(scr);
+  buildBatteryScreen(scr);
   buildMusicScreen(scr);
   buildMusicPortraitScreen(scr);
   buildPageDots(scr);
   showScreen(ScreenIndex::Clock, 0);
   refreshPageDots();
+  updateWifiStatusIndicator(WifiIndicatorState::Connecting);
+  lastRenderedWifiStatus = static_cast<int>(WifiIndicatorState::Connecting);
   showStartupIconPreview(scr);
 
   updateMusicTrackUi();
@@ -825,8 +858,9 @@ void setup() {
   updateGlanceTile();
   updateWeatherUi();
   updatePortraitClockUi();
+  updateBatteryUi();
 
-  Serial.println("UI ready. Commands: clock|c, weather|w, port, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, d<0-255>, show <name>, hide, help");
+  Serial.println("UI ready. Commands: clock|c, weather|w, port, battery|b, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, dev<number> <0-100>, d<0-255>, show <name>, hide, help");
   fetchWeather();
   fetchSpotifyPlayback();
 }

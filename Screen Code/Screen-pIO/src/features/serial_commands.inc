@@ -23,6 +23,7 @@ void handleSerialCommands() {
       if (cmd == "clock" || cmd == "c") { showScreen(ScreenIndex::Clock); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "weather" || cmd == "w") { showScreen(ScreenIndex::Weather); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "port") { showScreen(ScreenIndex::Portrait); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "battery" || cmd == "b") { showScreen(ScreenIndex::Battery); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "music" || cmd == "m") { showScreen(ScreenIndex::Music); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "rotate") {
         if (currentScreen == ScreenIndex::Music) showScreen(ScreenIndex::MusicPortrait);
@@ -78,6 +79,27 @@ void handleSerialCommands() {
         else Serial.println(spotify.lastError.c_str());
         return;
       }
+      if (cmd.startsWith("dev")) {
+        int pos = 3;
+        while (pos < (int)cmd.length() && isdigit((unsigned char)cmd[pos])) ++pos;
+        if (pos == 3) { Serial.println("use: dev<number> <0-100>"); return; }
+        const int deviceNumber = cmd.substring(3, pos).toInt();
+        String level = cmd.substring(pos);
+        level.trim();
+        bool ok = !level.isEmpty();
+        for (size_t i = 0; i < level.length() && ok; ++i) {
+          ok = isdigit((unsigned char)level[i]) != 0;
+        }
+        if (ok) {
+          const int percent = level.toInt();
+          if (setDeviceBattery(deviceNumber, percent)) {
+            Serial.printf("dev%d %d%%\n", deviceNumber, percent);
+            return;
+          }
+        }
+        Serial.printf("use: dev<1-%d> <0-100>\n", kBatteryDeviceCount);
+        return;
+      }
       if (cmd.length() >= 2 && cmd[0] == 'd') {
         const String v = cmd.substring(1);
         bool ok = !v.isEmpty();
@@ -89,7 +111,7 @@ void handleSerialCommands() {
         Serial.println("use d<0-255>"); return;
       }
       if (cmd == "help" || cmd == "?") {
-        Serial.println("commands: clock|c, weather|w, port, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, d<0-255>, show <name>, hide, help|?");
+        Serial.println("commands: clock|c, weather|w, port, battery|b, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, dev<number> <0-100>, d<0-255>, show <name>, hide, help|?");
         return;
       }
       Serial.printf("unknown: %s\n", cmd.c_str());

@@ -113,6 +113,35 @@ struct WeatherUi {
 } weatherUi;
 lv_color_t *condIconBuf = nullptr;
 
+constexpr int kBatteryDeviceCount = 4;
+
+struct BatteryDeviceState {
+  const char *name;
+  const char *icon;
+  int percent;
+};
+
+BatteryDeviceState batteryDevices[kBatteryDeviceCount] = {
+    {"DEV 1", LV_SYMBOL_HOME, 92},
+    {"DEV 2", LV_SYMBOL_SETTINGS, 53},
+    {"DEV 3", LV_SYMBOL_POWER, 15},
+    {"DEV 4", LV_SYMBOL_CHARGE, 50},
+};
+
+struct BatteryGaugeUi {
+  lv_obj_t *arc = nullptr;
+  lv_obj_t *value = nullptr;
+  lv_obj_t *icon = nullptr;
+  lv_obj_t *name = nullptr;
+};
+
+struct BatteryUi {
+  lv_obj_t *root = nullptr;
+  StatusRow status;
+  lv_obj_t *updated = nullptr;
+  BatteryGaugeUi gauges[kBatteryDeviceCount];
+} batteryUi;
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -126,7 +155,9 @@ String serialCommandBuffer;
 bool colonVisible = true;
 unsigned long lastColonBlink = 0;
 bool ntpConfigured = false;
+bool wifiConnectInProgress = false;
 long lastRenderedClockMinute = LONG_MIN;
 int lastRenderedLinkState = -1;
+int lastRenderedWifiStatus = -1;
 
 // ---------------------------------------------------------------------------
