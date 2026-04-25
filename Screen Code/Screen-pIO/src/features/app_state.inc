@@ -23,6 +23,7 @@ constexpr int kMusicTrackCount = sizeof(kMusicTracks) / sizeof(kMusicTracks[0]);
 
 struct MusicUi {
   lv_obj_t *root = nullptr;
+  lv_obj_t *backgroundCanvas = nullptr;
   StatusRow status;
   lv_obj_t *album = nullptr;
   lv_obj_t *albumCanvas = nullptr;
@@ -49,6 +50,7 @@ struct MusicUi {
   int soundbarHeight = 0;
 } musicUi;
 MusicUi musicPortraitUi;
+lv_color_t *musicBackgroundBuffer = nullptr;
 
 int musicTrackIndex = 0;
 bool musicIsPlaying = true;

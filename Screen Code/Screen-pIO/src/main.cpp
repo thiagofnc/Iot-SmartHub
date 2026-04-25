@@ -259,6 +259,9 @@ void showScreen(ScreenIndex s, int direction = 0) {
 
   if (isPortraitScreen(prev) != isPortraitScreen(s)) direction = 0;
   applyScreenOrientation(s);
+  if (s == ScreenIndex::Music) {
+    ensureMusicBackground();
+  }
 
   lv_obj_t *incoming = rootForScreen(s);
   lv_obj_t *outgoing = rootForScreen(prev);

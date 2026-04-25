@@ -11,6 +11,7 @@ constexpr uint32_t kSoundbarPalette[] = {
     0x4CC9F0,  // sky
 };
 constexpr int kSoundbarPaletteCount = sizeof(kSoundbarPalette) / sizeof(kSoundbarPalette[0]);
+constexpr const char *kMusicBackgroundImageName = "music_back";
 
 String musicFormatTime(int totalSec) {
   if (totalSec < 0) totalSec = 0;
@@ -120,6 +121,95 @@ uint32_t musicSoundbarColor(int index) {
   return ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
 }
 
+bool loadMusicBackgroundFromSd() {
+  Serial.printf("Music background: loading /images/%s.bin\n", kMusicBackgroundImageName);
+  if (!sdReady) {
+    Serial.println("Music background skipped: SD not available");
+    return false;
+  }
+
+  String path = "/images/";
+  path += kMusicBackgroundImageName;
+  path += ".bin";
+
+  File f = SD.open(path.c_str(), FILE_READ);
+  if (!f) {
+    Serial.printf("Music background open failed: %s\n", path.c_str());
+    return false;
+  }
+  if ((size_t)f.size() != SD_IMAGE_BYTES) {
+    Serial.printf("Music background size mismatch: %s is %u bytes, expected %u\n",
+                  path.c_str(), (unsigned)f.size(), (unsigned)SD_IMAGE_BYTES);
+    Serial.printf("Music background must be raw RGB565 at %ux%u pixels (%u bytes)\n",
+                  SCREEN_WIDTH, SCREEN_HEIGHT, (unsigned)SD_IMAGE_BYTES);
+    f.close();
+    return false;
+  }
+
+  if (!musicBackgroundBuffer) {
+    musicBackgroundBuffer = static_cast<lv_color_t *>(
+        heap_caps_malloc(SD_IMAGE_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!musicBackgroundBuffer) {
+      Serial.println("Music background buffer alloc failed");
+      f.close();
+      return false;
+    }
+  }
+
+  uint8_t *dst = reinterpret_cast<uint8_t *>(musicBackgroundBuffer);
+  size_t remaining = SD_IMAGE_BYTES;
+  while (remaining > 0) {
+    const size_t chunk = remaining > 4096 ? 4096 : remaining;
+    const int read = f.read(dst, chunk);
+    if (read <= 0) {
+      Serial.println("Music background read failed");
+      f.close();
+      return false;
+    }
+    for (int i = 0; i + 1 < read; i += 2) {
+      const uint8_t t = dst[i];
+      dst[i] = dst[i + 1];
+      dst[i + 1] = t;
+    }
+    dst += read;
+    remaining -= read;
+  }
+  f.close();
+  Serial.printf("Music background loaded: %s\n", kMusicBackgroundImageName);
+  return true;
+}
+
+void attachMusicBackground(lv_obj_t *root, MusicUi &ui) {
+  if (ui.backgroundCanvas) {
+    lv_obj_clear_flag(ui.backgroundCanvas, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_background(ui.backgroundCanvas);
+    return;
+  }
+
+  ui.backgroundCanvas = lv_canvas_create(root);
+  lv_obj_remove_style_all(ui.backgroundCanvas);
+  lv_obj_set_size(ui.backgroundCanvas, SCREEN_WIDTH, SCREEN_HEIGHT);
+  lv_obj_set_pos(ui.backgroundCanvas, 0, 0);
+  lv_canvas_set_buffer(ui.backgroundCanvas, musicBackgroundBuffer,
+                       SCREEN_WIDTH, SCREEN_HEIGHT, LV_IMG_CF_TRUE_COLOR);
+  lv_obj_move_background(ui.backgroundCanvas);
+}
+
+bool ensureMusicBackground() {
+  if (!musicUi.root) {
+    Serial.println("Music background skipped: music UI not built");
+    return false;
+  }
+
+  if (!musicBackgroundBuffer && !loadMusicBackgroundFromSd()) {
+    return false;
+  }
+
+  attachMusicBackground(musicUi.root, musicUi);
+  Serial.println("Music background: active");
+  return true;
+}
+
 void buildMusicScreen(lv_obj_t *parent) {
   musicUi.root = makePlain(parent);
   lv_obj_set_size(musicUi.root, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -131,7 +221,6 @@ void buildMusicScreen(lv_obj_t *parent) {
   lv_obj_set_style_bg_color(musicUi.root, hex(0x060A12), 0);
   lv_obj_set_style_bg_grad_dir(musicUi.root, LV_GRAD_DIR_NONE, 0);
   lv_obj_set_style_bg_opa(musicUi.root, LV_OPA_COVER, 0);
-
   // Status strip — left: accent dot + "NOW PLAYING · SPOTIFY"; right: room + battery.
   buildStatusRow(musicUi.root, musicUi.status, "NOW PLAYING \xC2\xB7 SPOTIFY",
                  "LIVING ROOM \xC2\xB7 68%");
