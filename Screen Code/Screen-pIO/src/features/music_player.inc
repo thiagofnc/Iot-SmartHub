@@ -179,7 +179,30 @@ bool loadMusicBackgroundFromSd() {
   return true;
 }
 
-void attachMusicBackground(lv_obj_t *root, MusicUi &ui) {
+bool prepareMusicPortraitBackground() {
+  if (musicPortraitBackgroundBuffer) return true;
+  if (!musicBackgroundBuffer) return false;
+
+  musicPortraitBackgroundBuffer = static_cast<lv_color_t *>(
+      heap_caps_malloc(SD_IMAGE_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!musicPortraitBackgroundBuffer) {
+    Serial.println("Music portrait background buffer alloc failed");
+    return false;
+  }
+
+  for (int y = 0; y < PORTRAIT_HEIGHT; ++y) {
+    for (int x = 0; x < PORTRAIT_WIDTH; ++x) {
+      const int srcX = y;
+      const int srcY = SCREEN_HEIGHT - 1 - x;
+      musicPortraitBackgroundBuffer[y * PORTRAIT_WIDTH + x] =
+          musicBackgroundBuffer[srcY * SCREEN_WIDTH + srcX];
+    }
+  }
+  return true;
+}
+
+void attachMusicBackground(lv_obj_t *root, MusicUi &ui, lv_color_t *buffer,
+                           int width, int height) {
   if (ui.backgroundCanvas) {
     lv_obj_clear_flag(ui.backgroundCanvas, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_background(ui.backgroundCanvas);
@@ -188,10 +211,10 @@ void attachMusicBackground(lv_obj_t *root, MusicUi &ui) {
 
   ui.backgroundCanvas = lv_canvas_create(root);
   lv_obj_remove_style_all(ui.backgroundCanvas);
-  lv_obj_set_size(ui.backgroundCanvas, SCREEN_WIDTH, SCREEN_HEIGHT);
+  lv_obj_set_size(ui.backgroundCanvas, width, height);
   lv_obj_set_pos(ui.backgroundCanvas, 0, 0);
-  lv_canvas_set_buffer(ui.backgroundCanvas, musicBackgroundBuffer,
-                       SCREEN_WIDTH, SCREEN_HEIGHT, LV_IMG_CF_TRUE_COLOR);
+  lv_canvas_set_buffer(ui.backgroundCanvas, buffer, width, height,
+                       LV_IMG_CF_TRUE_COLOR);
   lv_obj_move_background(ui.backgroundCanvas);
 }
 
@@ -205,7 +228,13 @@ bool ensureMusicBackground() {
     return false;
   }
 
-  attachMusicBackground(musicUi.root, musicUi);
+  attachMusicBackground(musicUi.root, musicUi, musicBackgroundBuffer,
+                        SCREEN_WIDTH, SCREEN_HEIGHT);
+  if (musicPortraitUi.root && prepareMusicPortraitBackground()) {
+    attachMusicBackground(musicPortraitUi.root, musicPortraitUi,
+                          musicPortraitBackgroundBuffer,
+                          PORTRAIT_WIDTH, PORTRAIT_HEIGHT);
+  }
   Serial.println("Music background: active");
   return true;
 }
@@ -641,13 +670,13 @@ void buildMusicPortraitScreen(lv_obj_t *parent) {
   musicPortraitUi.prevBtn = makeMusicSecondaryBtn(musicPortraitUi.root, prevNextSize,
                                                   LV_SYMBOL_PREV,
                                                   &lv_font_montserrat_24, COL_INK);
-  lv_obj_set_style_bg_color(musicPortraitUi.prevBtn, hex(0x1B2238), 0);
-  lv_obj_set_style_bg_opa(musicPortraitUi.prevBtn, LV_OPA_70, 0);
   lv_obj_set_pos(musicPortraitUi.prevBtn, 130, ctrlY + (playSize - prevNextSize) / 2);
 
   musicPortraitUi.playGlow = makePlain(musicPortraitUi.root);
-  lv_obj_set_size(musicPortraitUi.playGlow, playSize + 28, playSize + 28);
-  lv_obj_set_pos(musicPortraitUi.playGlow, (screenW - playSize) / 2 - 14, ctrlY - 14);
+  const int glowSize = playSize + 26;
+  lv_obj_set_size(musicPortraitUi.playGlow, glowSize, glowSize);
+  lv_obj_set_pos(musicPortraitUi.playGlow, (screenW - playSize) / 2 - (glowSize - playSize) / 2,
+                 ctrlY - (glowSize - playSize) / 2);
   lv_obj_set_style_radius(musicPortraitUi.playGlow, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_color(musicPortraitUi.playGlow, hex(COL_ACCENT), 0);
   lv_obj_set_style_bg_opa(musicPortraitUi.playGlow, LV_OPA_20, 0);
@@ -660,7 +689,7 @@ void buildMusicPortraitScreen(lv_obj_t *parent) {
   lv_obj_set_style_bg_grad_color(musicPortraitUi.playBtn, hex(0x5BDCE9), 0);
   lv_obj_set_style_bg_grad_dir(musicPortraitUi.playBtn, LV_GRAD_DIR_VER, 0);
   lv_obj_set_style_bg_opa(musicPortraitUi.playBtn, LV_OPA_COVER, 0);
-  lv_obj_set_style_shadow_width(musicPortraitUi.playBtn, 42, 0);
+  lv_obj_set_style_shadow_width(musicPortraitUi.playBtn, 40, 0);
   lv_obj_set_style_shadow_color(musicPortraitUi.playBtn, hex(COL_ACCENT), 0);
   lv_obj_set_style_shadow_opa(musicPortraitUi.playBtn, LV_OPA_70, 0);
   musicPortraitUi.playIcon = makeLabel(musicPortraitUi.playBtn, LV_SYMBOL_PAUSE,
@@ -670,8 +699,6 @@ void buildMusicPortraitScreen(lv_obj_t *parent) {
   musicPortraitUi.nextBtn = makeMusicSecondaryBtn(musicPortraitUi.root, prevNextSize,
                                                   LV_SYMBOL_NEXT,
                                                   &lv_font_montserrat_24, COL_INK);
-  lv_obj_set_style_bg_color(musicPortraitUi.nextBtn, hex(0x1B2238), 0);
-  lv_obj_set_style_bg_opa(musicPortraitUi.nextBtn, LV_OPA_70, 0);
   lv_obj_set_pos(musicPortraitUi.nextBtn, 292, ctrlY + (playSize - prevNextSize) / 2);
 
   musicPortraitUi.repeatBtn = makeMusicSecondaryBtn(musicPortraitUi.root, smallSize,

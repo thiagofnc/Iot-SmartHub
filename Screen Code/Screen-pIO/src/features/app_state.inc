@@ -51,6 +51,7 @@ struct MusicUi {
 } musicUi;
 MusicUi musicPortraitUi;
 lv_color_t *musicBackgroundBuffer = nullptr;
+lv_color_t *musicPortraitBackgroundBuffer = nullptr;
 
 int musicTrackIndex = 0;
 bool musicIsPlaying = true;

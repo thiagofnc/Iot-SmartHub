@@ -259,7 +259,7 @@ void showScreen(ScreenIndex s, int direction = 0) {
 
   if (isPortraitScreen(prev) != isPortraitScreen(s)) direction = 0;
   applyScreenOrientation(s);
-  if (s == ScreenIndex::Music) {
+  if (isMusicScreen(s)) {
     ensureMusicBackground();
   }
 
