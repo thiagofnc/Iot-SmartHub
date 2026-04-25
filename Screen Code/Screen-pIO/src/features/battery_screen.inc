@@ -39,7 +39,8 @@ bool setDeviceBattery(int deviceNumber, int percent) {
 }
 
 lv_obj_t *makeBatteryGauge(lv_obj_t *parent, int index, int x, int y) {
-  lv_obj_t *tile = makeGlass(parent, 220, 164, 18);
+  lv_obj_t *tile = makePlain(parent);
+  lv_obj_set_size(tile, 220, 164);
   lv_obj_set_pos(tile, x, y);
 
   BatteryGaugeUi &ui = batteryUi.gauges[index];
