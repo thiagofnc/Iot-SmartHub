@@ -447,24 +447,28 @@ void updatePortraitClockUi() {
   LinkState link = currentLinkState();
 
   if (link == LinkState::Offline) {
+    if (portraitUi.status.rightInfo) lv_label_set_text(portraitUi.status.rightInfo, "--\xC2\xB0  \xE2\x80\xA2  41%");
     lv_label_set_text(portraitUi.weatherTemp, "--\xC2\xB0");
     lv_label_set_text(portraitUi.weatherCond, "NO WI-FI");
     lv_label_set_text(portraitUi.weatherLoc, "OFFLINE");
-    renderIconToBuffer(741, "50d", portraitIconBuf, 56, 56);
+    renderIconToBuffer(741, "50d", portraitIconBuf, 24, 24);
     lv_obj_invalidate(portraitUi.weatherIconCanvas);
     return;
   }
 
   if (link == LinkState::NoData) {
+    if (portraitUi.status.rightInfo) lv_label_set_text(portraitUi.status.rightInfo, "--\xC2\xB0  \xE2\x80\xA2  41%");
     lv_label_set_text(portraitUi.weatherTemp, "--\xC2\xB0");
     lv_label_set_text(portraitUi.weatherCond, "WAITING FOR DATA");
     lv_label_set_text(portraitUi.weatherLoc, "NO DATA");
-    renderIconToBuffer(803, "03d", portraitIconBuf, 56, 56);
+    renderIconToBuffer(803, "03d", portraitIconBuf, 24, 24);
     lv_obj_invalidate(portraitUi.weatherIconCanvas);
     return;
   }
 
-  lv_label_set_text(portraitUi.weatherTemp, (String(weatherData.temperature) + "\xC2\xB0").c_str());
+  String tempText = String(weatherData.temperature) + "\xC2\xB0";
+  if (portraitUi.status.rightInfo) lv_label_set_text(portraitUi.status.rightInfo, (tempText + "  \xE2\x80\xA2  41%").c_str());
+  lv_label_set_text(portraitUi.weatherTemp, tempText.c_str());
 
   String cond = weatherData.condition;
   cond.toUpperCase();
@@ -477,7 +481,7 @@ void updatePortraitClockUi() {
   lv_label_set_text(portraitUi.weatherLoc, loc.c_str());
 
   const char *iconCode = weatherData.iconCode.isEmpty() ? "01d" : weatherData.iconCode.c_str();
-  renderIconToBuffer(weatherData.conditionId, iconCode, portraitIconBuf, 56, 56);
+  renderIconToBuffer(weatherData.conditionId, iconCode, portraitIconBuf, 24, 24);
   lv_obj_invalidate(portraitUi.weatherIconCanvas);
 }
 

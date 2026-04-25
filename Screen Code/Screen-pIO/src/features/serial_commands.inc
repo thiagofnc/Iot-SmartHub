@@ -26,7 +26,9 @@ void handleSerialCommands() {
       if (cmd == "battery" || cmd == "b") { showScreen(ScreenIndex::Battery); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "music" || cmd == "m") { showScreen(ScreenIndex::Music); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "rotate") {
-        if (currentScreen == ScreenIndex::Music) showScreen(ScreenIndex::MusicPortrait);
+        if (currentScreen == ScreenIndex::Clock) showScreen(ScreenIndex::Portrait);
+        else if (currentScreen == ScreenIndex::Portrait) showScreen(ScreenIndex::Clock);
+        else if (currentScreen == ScreenIndex::Music) showScreen(ScreenIndex::MusicPortrait);
         else if (currentScreen == ScreenIndex::MusicPortrait) showScreen(ScreenIndex::Music);
         Serial.println(screenName(currentScreen));
         return;
