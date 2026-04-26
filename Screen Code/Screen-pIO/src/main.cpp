@@ -36,7 +36,9 @@ constexpr uint16_t SCREEN_HEIGHT = 480;
 constexpr uint16_t PORTRAIT_WIDTH = SCREEN_HEIGHT;
 constexpr uint16_t PORTRAIT_HEIGHT = SCREEN_WIDTH;
 constexpr uint32_t WEATHER_REFRESH_MS = 10UL * 60UL * 1000UL;
-constexpr uint32_t SPOTIFY_REFRESH_MS = 5000UL;
+constexpr uint32_t SPOTIFY_PLAYING_REFRESH_MS = 2000UL;
+constexpr uint32_t SPOTIFY_PAUSED_REFRESH_MS = 2000UL;
+constexpr uint32_t SPOTIFY_IDLE_REFRESH_MS = 2000UL;
 constexpr uint32_t WIFI_RETRY_MS = 15000UL;
 constexpr uint32_t HTTP_TIMEOUT_MS = 15000UL;
 constexpr uint32_t STARTUP_COLOR_TEST_MS = 250UL;
@@ -878,7 +880,7 @@ void setup() {
 
   Serial.println("UI ready. Commands: clock|c, weather|w, port, battery|b, battery-port|bp, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, dev<number> <0-100>, d<0-255>, show <name>, hide, help");
   fetchWeather();
-  fetchSpotifyPlayback();
+  startSpotifyPollTask();
 }
 
 void loop() {

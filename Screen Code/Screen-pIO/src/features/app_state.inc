@@ -71,6 +71,7 @@ struct SpotifyState {
   String coverLoadedUrl;
   String accessToken;
   String lastError;
+  int lastHttpCode = 0;
   int durationSec = 1;
   int progressSec = 0;
   unsigned long tokenExpiresAtMs = 0;
@@ -79,6 +80,9 @@ struct SpotifyState {
 };
 
 SpotifyState spotify;
+TaskHandle_t spotifyPollTaskHandle = nullptr;
+volatile bool spotifyPollInFlight = false;
+volatile bool spotifyUiDirty = false;
 lv_color_t *spotifyCoverBuffer = nullptr;
 lv_img_dsc_t spotifyCoverDsc;
 constexpr int kSpotifyCoverSize = 300;

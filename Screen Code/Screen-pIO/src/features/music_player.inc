@@ -90,7 +90,7 @@ bool musicCurrentlyPlaying() {
 }
 
 bool spotifyCommand(const char *path, const char *method = "POST");
-bool fetchSpotifyPlayback();
+bool fetchSpotifyPlayback(bool applyUi = true);
 
 // Build one of the round secondary controls (shuffle/prev/next/repeat) so the
 // trio of small buttons share one styling path and stay visually consistent.

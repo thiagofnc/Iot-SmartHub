@@ -133,12 +133,18 @@ void handleSerialCommands() {
 
 void tickSpotify() {
   if (!spotifyConfigured()) return;
+  if (spotifyUiDirty) applySpotifyUiUpdate();
+
   const unsigned long now = millis();
-  if (now - spotify.lastFetchMs < SPOTIFY_REFRESH_MS) {
+  const uint32_t refreshMs = spotify.valid
+                                 ? (spotify.isPlaying ? SPOTIFY_PLAYING_REFRESH_MS
+                                                      : SPOTIFY_PAUSED_REFRESH_MS)
+                                 : SPOTIFY_IDLE_REFRESH_MS;
+  if (now - spotify.lastFetchMs < refreshMs) {
     if (spotify.valid && isMusicScreen(currentScreen)) updateMusicProgress();
     return;
   }
-  fetchSpotifyPlayback();
+  if (!spotifyPollInFlight) startSpotifyPollTask();
 }
 
 // ---------------------------------------------------------------------------

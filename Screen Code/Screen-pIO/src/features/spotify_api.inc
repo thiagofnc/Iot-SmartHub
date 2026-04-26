@@ -87,6 +87,7 @@ bool spotifyRequest(const char *method, const String &path, const String &body, 
     uint8_t emptyBody = 0;
     code = http.sendRequest(method, &emptyBody, 0);
   }
+  spotify.lastHttpCode = code;
 
   String payload;
   if (code != HTTP_CODE_NO_CONTENT) payload = http.getString();
@@ -125,7 +126,11 @@ bool spotifyJpgOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bi
   return true;
 }
 
-void spotifyShowFallbackCover() {
+void spotifyShowFallbackCover(bool applyUi = true) {
+  if (!applyUi) {
+    spotifyUiDirty = true;
+    return;
+  }
   if (kMusicCoverSource == MusicCoverSource::SdCard) {
     ensureMusicCover();
     return;
@@ -134,9 +139,27 @@ void spotifyShowFallbackCover() {
   if (musicPortraitUi.albumCanvas) lv_obj_add_flag(musicPortraitUi.albumCanvas, LV_OBJ_FLAG_HIDDEN);
 }
 
-bool spotifyLoadAlbumCover(const String &imageUrl) {
+void applySpotifyUiUpdate() {
+  if (spotify.valid) {
+    if (kMusicCoverSource == MusicCoverSource::Spotify && spotifyCoverBuffer) {
+      applyMusicCoverBufferToUi(musicUi, spotifyCoverBuffer);
+      applyMusicCoverBufferToUi(musicPortraitUi, spotifyCoverBuffer);
+    }
+  } else {
+    spotifyShowFallbackCover(true);
+  }
+  updateMusicTrackUi();
+  updateMusicPlayIcon();
+  if (clockUi.nowPlayingTitle) lv_label_set_text(clockUi.nowPlayingTitle, musicCurrentTitle());
+  if (clockUi.nowPlayingArtist) lv_label_set_text(clockUi.nowPlayingArtist, musicCurrentArtist());
+  if (portraitUi.nowPlayingTitle) lv_label_set_text(portraitUi.nowPlayingTitle, musicCurrentTitle());
+  if (portraitUi.nowPlayingArtist) lv_label_set_text(portraitUi.nowPlayingArtist, musicCurrentArtist());
+  spotifyUiDirty = false;
+}
+
+bool spotifyLoadAlbumCover(const String &imageUrl, bool applyUi = true) {
   if (kMusicCoverSource == MusicCoverSource::SdCard) {
-    ensureMusicCover();
+    if (applyUi) ensureMusicCover();
     return true;
   }
   if (imageUrl.isEmpty() || imageUrl == spotify.coverLoadedUrl) return true;
@@ -190,7 +213,7 @@ bool spotifyLoadAlbumCover(const String &imageUrl) {
       readTotal += readNow;
     } else {
       delay(1);
-      lv_timer_handler();
+      if (applyUi) lv_timer_handler();
     }
   }
   http.end();
@@ -207,22 +230,27 @@ bool spotifyLoadAlbumCover(const String &imageUrl) {
   heap_caps_free(jpg);
   if (!decoded) return false;
 
-  spotifyCoverDsc.header.always_zero = 0;
-  spotifyCoverDsc.header.w = kSpotifyCoverSize;
-  spotifyCoverDsc.header.h = kSpotifyCoverSize;
-  spotifyCoverDsc.header.cf = LV_IMG_CF_TRUE_COLOR;
-  spotifyCoverDsc.data_size = kSpotifyCoverSize * kSpotifyCoverSize * sizeof(lv_color_t);
-  spotifyCoverDsc.data = reinterpret_cast<const uint8_t *>(spotifyCoverBuffer);
-  applyMusicCoverBufferToUi(musicUi, spotifyCoverBuffer);
-  applyMusicCoverBufferToUi(musicPortraitUi, spotifyCoverBuffer);
   spotify.coverLoadedUrl = imageUrl;
+  if (applyUi) {
+    spotifyCoverDsc.header.always_zero = 0;
+    spotifyCoverDsc.header.w = kSpotifyCoverSize;
+    spotifyCoverDsc.header.h = kSpotifyCoverSize;
+    spotifyCoverDsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+    spotifyCoverDsc.data_size = kSpotifyCoverSize * kSpotifyCoverSize * sizeof(lv_color_t);
+    spotifyCoverDsc.data = reinterpret_cast<const uint8_t *>(spotifyCoverBuffer);
+    applyMusicCoverBufferToUi(musicUi, spotifyCoverBuffer);
+    applyMusicCoverBufferToUi(musicPortraitUi, spotifyCoverBuffer);
+  } else {
+    spotifyUiDirty = true;
+  }
   return true;
 }
 
-bool fetchSpotifyPlayback() {
+bool fetchSpotifyPlayback(bool applyUi) {
   if (!spotifyConfigured()) return false;
   if (WiFi.status() != WL_CONNECTED) connectWifiIfNeeded();
   if (WiFi.status() != WL_CONNECTED) return false;
+  spotify.lastFetchMs = millis();
 
   String path = "/me/player/currently-playing";
   if (strlen(SPOTIFY_MARKET) > 0) {
@@ -232,13 +260,11 @@ bool fetchSpotifyPlayback() {
 
   String payload;
   if (!spotifyRequest("GET", path, "", &payload)) return false;
-  spotify.lastFetchMs = millis();
   if (payload.isEmpty()) {
     spotify.valid = false;
     spotify.lastError = "NOT PLAYING";
-    spotifyShowFallbackCover();
-    updateMusicTrackUi();
-    updateMusicPlayIcon();
+    if (applyUi) applySpotifyUiUpdate();
+    else spotifyUiDirty = true;
     return false;
   }
 
@@ -251,7 +277,8 @@ bool fetchSpotifyPlayback() {
   if (item.isNull() || strcmp(item["type"] | "track", "track") != 0) {
     spotify.valid = false;
     spotify.lastError = "NO TRACK";
-    spotifyShowFallbackCover();
+    if (applyUi) applySpotifyUiUpdate();
+    else spotifyUiDirty = true;
     return false;
   }
 
@@ -283,19 +310,84 @@ bool fetchSpotifyPlayback() {
 
   spotify.valid = true;
   spotify.lastError = "";
-  spotifyLoadAlbumCover(spotify.imageUrl);
-  updateMusicTrackUi();
-  updateMusicPlayIcon();
-  if (clockUi.nowPlayingTitle) lv_label_set_text(clockUi.nowPlayingTitle, musicCurrentTitle());
-  if (clockUi.nowPlayingArtist) lv_label_set_text(clockUi.nowPlayingArtist, musicCurrentArtist());
-  if (portraitUi.nowPlayingTitle) lv_label_set_text(portraitUi.nowPlayingTitle, musicCurrentTitle());
-  if (portraitUi.nowPlayingArtist) lv_label_set_text(portraitUi.nowPlayingArtist, musicCurrentArtist());
+  spotifyLoadAlbumCover(spotify.imageUrl, applyUi);
+  if (applyUi) applySpotifyUiUpdate();
+  else spotifyUiDirty = true;
   return true;
+}
+
+void spotifyPollTask(void *param) {
+  (void)param;
+  fetchSpotifyPlayback(false);
+  spotifyPollInFlight = false;
+  spotifyPollTaskHandle = nullptr;
+  vTaskDelete(nullptr);
+}
+
+bool startSpotifyPollTask() {
+  if (spotifyPollInFlight || !spotifyConfigured()) return false;
+  spotifyPollInFlight = true;
+  const BaseType_t ok = xTaskCreatePinnedToCore(
+      spotifyPollTask, "spotify_poll", 16384, nullptr, 1,
+      &spotifyPollTaskHandle, 0);
+  if (ok != pdPASS) {
+    spotifyPollInFlight = false;
+    spotifyPollTaskHandle = nullptr;
+    spotify.lastError = "SPOTIFY TASK FAILED";
+    return false;
+  }
+  return true;
+}
+
+String spotifyFindPlayableDeviceId() {
+  String payload;
+  if (!spotifyRequest("GET", "/me/player/devices", "", &payload)) return "";
+
+  JsonDocument doc;
+  if (deserializeJson(doc, payload)) {
+    spotify.lastError = "SPOTIFY DEVICES JSON";
+    return "";
+  }
+
+  String firstPlayable;
+  JsonArray devices = doc["devices"].as<JsonArray>();
+  for (JsonVariant device : devices) {
+    const char *id = device["id"] | "";
+    const bool restricted = device["is_restricted"] | false;
+    if (strlen(id) == 0 || restricted) continue;
+    if (device["is_active"] | false) return String(id);
+    if (firstPlayable.isEmpty()) firstPlayable = String(id);
+  }
+  return firstPlayable;
+}
+
+bool spotifyTransferPlaybackToDevice(const String &deviceId, bool play) {
+  if (deviceId.isEmpty()) {
+    spotify.lastError = "NO SPOTIFY DEVICE";
+    return false;
+  }
+  String body = "{\"device_ids\":[\"";
+  body += deviceId;
+  body += "\"],\"play\":";
+  body += play ? "true" : "false";
+  body += "}";
+  return spotifyRequest("PUT", "/me/player", body, nullptr);
 }
 
 bool spotifyCommand(const char *path, const char *method) {
   if (!spotifyConfigured()) return false;
-  return spotifyRequest(method, String(path) + spotifyDeviceQuery(), "", nullptr);
+  const String requestPath = String(path) + spotifyDeviceQuery();
+  if (spotifyRequest(method, requestPath, "", nullptr)) return true;
+
+  if (strcmp(path, "/me/player/play") == 0 && spotify.lastHttpCode == HTTP_CODE_NOT_FOUND &&
+      strlen(SPOTIFY_DEVICE_ID) == 0) {
+    const String deviceId = spotifyFindPlayableDeviceId();
+    if (!spotifyTransferPlaybackToDevice(deviceId, false)) return false;
+    delay(250);
+    lv_timer_handler();
+    return spotifyRequest(method, String(path) + "?device_id=" + urlEncode(deviceId), "", nullptr);
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
