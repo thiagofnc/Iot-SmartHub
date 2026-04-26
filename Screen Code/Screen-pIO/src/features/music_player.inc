@@ -16,8 +16,8 @@ enum class MusicCoverSource {
   SdCard,
   Spotify,
 };
-// Change this to MusicCoverSource::Spotify to go back to live Spotify art.
-constexpr MusicCoverSource kMusicCoverSource = MusicCoverSource::SdCard;
+// Use live Spotify album art for the music cover.
+constexpr MusicCoverSource kMusicCoverSource = MusicCoverSource::Spotify;
 // Change this one value to use a different SD-card cover image.
 // The file must live in /images and use raw RGB565 .bin format.
 constexpr const char *kMusicCoverImageName = "music_cover";

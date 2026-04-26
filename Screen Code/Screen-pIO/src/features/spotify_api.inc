@@ -71,12 +71,22 @@ bool spotifyRequest(const char *method, const String &path, const String &body, 
     return false;
   }
   http.addHeader("Authorization", "Bearer " + spotify.accessToken);
-  if (body.length() > 0) http.addHeader("Content-Type", "application/json");
+  if (body.length() > 0) {
+    http.addHeader("Content-Type", "application/json");
+  } else if (strcmp(method, "GET") != 0) {
+    http.addHeader("Content-Length", "0");
+  }
 
   int code;
   if (strcmp(method, "GET") == 0) code = http.GET();
-  else if (strcmp(method, "POST") == 0) code = http.POST(body);
-  else code = http.sendRequest(method, body);
+  else if (body.length() > 0) {
+    code = http.sendRequest(method,
+                            reinterpret_cast<uint8_t *>(const_cast<char *>(body.c_str())),
+                            body.length());
+  } else {
+    uint8_t emptyBody = 0;
+    code = http.sendRequest(method, &emptyBody, 0);
+  }
 
   String payload;
   if (code != HTTP_CODE_NO_CONTENT) payload = http.getString();
