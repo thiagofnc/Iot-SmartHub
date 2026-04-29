@@ -1,0 +1,6 @@
+.pio/
+.vscode/
+
+# Local secrets/config
+Screen Code/Screen-pIO/include/AppConfig.h
+Camera Code/Camera-pIO/include/CameraConfig.h
