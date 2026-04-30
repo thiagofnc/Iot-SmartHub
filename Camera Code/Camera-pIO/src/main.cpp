@@ -9,6 +9,8 @@
 #include "CameraConfig.h"
 #include "camera_pins.h"
 
+#include "edge-impulse-sdk/classifier/ei_run_classifier.h"
+
 namespace {
 
 WebServer server(80);
@@ -27,7 +29,20 @@ void sendPlain(int code, const char* message) {
   server.send(code, "text/plain", message);
 }
 
-bool initCamera() {
+enum CameraMode { CAM_MODE_CAPTURE, CAM_MODE_INFERENCE };
+CameraMode g_camMode = CAM_MODE_CAPTURE;
+bool g_camInitialized = false;
+
+bool initCamera(CameraMode mode) {
+  if (g_camInitialized) {
+    esp_camera_deinit();
+    g_camInitialized = false;
+    // Give cam_task time to actually exit and free its DMA descriptors before
+    // we re-enter init. Without this, init reuses partially-released state and
+    // the next cam_task blows its stack canary on the first frame.
+    delay(100);
+  }
+
   camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -48,16 +63,25 @@ bool initCamera() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_LATEST;
-
-  // OV2640 driver init only accepts a subset of frame sizes; 96x96 is reachable
-  // only via post-init sensor downscale (set_framesize below). Init at QVGA so
-  // buffers stay small but valid, and use fb_count=1 to avoid stale double-buffered frames.
-  config.frame_size = FRAMESIZE_QVGA;
-  config.jpeg_quality = 12;
   config.fb_count = 1;
   config.fb_location = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
+
+  if (mode == CAM_MODE_INFERENCE) {
+    // Init the camera at 96x96 RGB565 directly. Initing at QVGA blows the
+    // cam_task stack on the first frame because RGB565 QVGA is 153KB per FB
+    // and the DMA descriptor chain sized for QVGA stays in place even after
+    // sensor->set_framesize(96X96).
+    config.pixel_format = PIXFORMAT_RGB565;
+    config.frame_size = FRAMESIZE_96X96;
+  } else {
+    // OV2640 driver init only accepts a subset of frame sizes; 96x96 is reachable
+    // only via post-init sensor downscale (set_framesize below). Init at QVGA so
+    // buffers stay small but valid, and use fb_count=1 to avoid stale double-buffered frames.
+    config.pixel_format = PIXFORMAT_JPEG;
+    config.frame_size = FRAMESIZE_QVGA;
+    config.jpeg_quality = 12;
+  }
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
@@ -67,10 +91,17 @@ bool initCamera() {
 
   sensor_t* sensor = esp_camera_sensor_get();
   if (sensor != nullptr) {
-    sensor->set_framesize(sensor, FRAMESIZE_96X96);
-    sensor->set_quality(sensor, 12);
-    sensor->set_special_effect(sensor, 2);  // grayscale
+    if (mode == CAM_MODE_CAPTURE) {
+      sensor->set_framesize(sensor, FRAMESIZE_96X96);
+      sensor->set_quality(sensor, 12);
+      sensor->set_special_effect(sensor, 2);  // grayscale
+    } else {
+      // Already 96x96 from init; just make sure no effect is applied.
+      sensor->set_special_effect(sensor, 0);
+    }
   }
+  g_camMode = mode;
+  g_camInitialized = true;
   return true;
 }
 
@@ -653,6 +684,10 @@ const char* nextLabel() {
 
 void toUpper(char* s) { for (; *s; ++s) *s = toupper(*s); }
 
+// Forward decl for the test-model toggle.
+bool switchToInferenceMode();
+bool switchToCaptureMode();
+
 void pollSerialControls() {
   while (Serial.available()) {
     int c = Serial.read();
@@ -676,8 +711,12 @@ void pollSerialControls() {
                       prefix.length() ? prefix.c_str() : "-");
         break;
       }
+      case 't': case 'T':
+        if (g_camMode == CAM_MODE_CAPTURE) switchToInferenceMode();
+        else                               switchToCaptureMode();
+        break;
       case '?': case 'h': case 'H':
-        Serial.println("[HELP]  p=pause/resume  s=shuffle  d=delete-last  ?=help");
+        Serial.println("[HELP]  p=pause/resume  s=shuffle  d=delete-last  t=toggle test-model  ?=help");
         break;
       default:
         break;  // ignore newlines, stray chars
@@ -746,6 +785,137 @@ void runCaptureCycle() {
   ++g_clipIdx;
 }
 
+// ---- Test-model (FOMO inference) loop ----------------------------------
+// In inference mode the camera runs in RGB565 96x96. Each frame is converted
+// into the packed-RGB888 float format the EI image-DSP block expects, then
+// run_classifier produces FOMO bounding boxes. We average box centroids and
+// print either "NO HAND" or "HAND <x,y>" (pixel coords in 96x96 input space).
+
+constexpr int kEiInputW = EI_CLASSIFIER_INPUT_WIDTH;   // 96
+constexpr int kEiInputH = EI_CLASSIFIER_INPUT_HEIGHT;  // 96
+constexpr int kEiPixels = kEiInputW * kEiInputH;
+
+// Buffer holding one packed-RGB888 pixel per element, expressed as float for
+// the SDK's signal_t callback. Allocated in PSRAM to keep DRAM free.
+float* g_eiFeatures = nullptr;
+
+bool ensureFeatureBuffer() {
+  if (g_eiFeatures != nullptr) return true;
+  size_t bytes = static_cast<size_t>(kEiPixels) * sizeof(float);
+  g_eiFeatures = static_cast<float*>(
+      psramFound() ? heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM)
+                   : malloc(bytes));
+  if (g_eiFeatures == nullptr) {
+    Serial.println("[ERR]   Failed to allocate inference feature buffer");
+    return false;
+  }
+  return true;
+}
+
+int eiSignalGetData(size_t offset, size_t length, float* out) {
+  memcpy(out, g_eiFeatures + offset, length * sizeof(float));
+  return 0;
+}
+
+// RGB565 framebuffers from esp_camera are stored byte-swapped: the high byte
+// comes second in memory. Reconstruct the 16-bit pixel before unpacking.
+void rgb565ToPackedFloats(const uint8_t* fb, size_t pixelCount, float* out) {
+  for (size_t i = 0; i < pixelCount; ++i) {
+    uint16_t hi = fb[i * 2 + 1];
+    uint16_t lo = fb[i * 2];
+    uint16_t px = (hi << 8) | lo;
+    uint8_t r = ((px & 0xF800) >> 8) | ((px & 0xE000) >> 13);
+    uint8_t g = ((px & 0x07E0) >> 3) | ((px & 0x0600) >> 9);
+    uint8_t b = ((px & 0x001F) << 3) | ((px & 0x001C) >> 2);
+    uint32_t packed = (static_cast<uint32_t>(r) << 16) |
+                      (static_cast<uint32_t>(g) << 8) |
+                      static_cast<uint32_t>(b);
+    out[i] = static_cast<float>(packed);
+  }
+}
+
+bool switchToInferenceMode() {
+  Serial.println("[MODE]  switching to test-model (inference)...");
+  if (!ensureFeatureBuffer()) return false;
+  if (!initCamera(CAM_MODE_INFERENCE)) {
+    Serial.println("[ERR]   inference camera init failed");
+    return false;
+  }
+  Serial.printf("[MODE]  inference active (input %dx%d, threshold %.2f)\n",
+                kEiInputW, kEiInputH,
+                (float)EI_CLASSIFIER_OBJECT_DETECTION_THRESHOLD);
+  Serial.println("[MODE]  press 't' again to return to capture mode.");
+  return true;
+}
+
+bool switchToCaptureMode() {
+  Serial.println("[MODE]  switching to capture...");
+  if (!initCamera(CAM_MODE_CAPTURE)) {
+    Serial.println("[ERR]   capture camera init failed");
+    return false;
+  }
+  Serial.println("[MODE]  capture active.");
+  return true;
+}
+
+void runInferenceCycle() {
+  pollSerialControls();
+  // Mode may have flipped back inside pollSerialControls.
+  if (g_camMode != CAM_MODE_INFERENCE) return;
+
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (fb == nullptr) {
+    Serial.println("[INF]   null framebuffer");
+    delay(50);
+    return;
+  }
+  if (fb->width != kEiInputW || fb->height != kEiInputH ||
+      fb->len < static_cast<size_t>(kEiPixels) * 2) {
+    Serial.printf("[INF]   unexpected frame %ux%u len=%u\n",
+                  fb->width, fb->height, static_cast<unsigned>(fb->len));
+    esp_camera_fb_return(fb);
+    delay(50);
+    return;
+  }
+
+  rgb565ToPackedFloats(fb->buf, kEiPixels, g_eiFeatures);
+  esp_camera_fb_return(fb);
+
+  signal_t signal;
+  signal.total_length = kEiPixels;
+  signal.get_data = &eiSignalGetData;
+
+  ei_impulse_result_t result = {};
+  EI_IMPULSE_ERROR rc = run_classifier(&signal, &result, false);
+  if (rc != EI_IMPULSE_OK) {
+    Serial.printf("[INF]   run_classifier failed (%d)\n", rc);
+    delay(100);
+    return;
+  }
+
+  float sumX = 0, sumY = 0, sumW = 0;
+  uint32_t hits = 0;
+  for (uint32_t i = 0; i < result.bounding_boxes_count; ++i) {
+    const auto& bb = result.bounding_boxes[i];
+    if (bb.value < EI_CLASSIFIER_OBJECT_DETECTION_THRESHOLD) continue;
+    float cx = bb.x + bb.width  * 0.5f;
+    float cy = bb.y + bb.height * 0.5f;
+    sumX += cx * bb.value;
+    sumY += cy * bb.value;
+    sumW += bb.value;
+    ++hits;
+  }
+
+  if (hits == 0 || sumW <= 0.0f) {
+    Serial.println("NO HAND");
+  } else {
+    float cx = sumX / sumW;
+    float cy = sumY / sumW;
+    Serial.printf("HAND %.1f,%.1f (n=%u, dsp=%dms inf=%dms)\n",
+                  cx, cy, hits, result.timing.dsp, result.timing.classification);
+  }
+}
+
 }  // namespace
 
 void setup() {
@@ -757,7 +927,7 @@ void setup() {
                 psramFound() ? "yes" : "no",
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
 
-  if (!initCamera()) return;
+  if (!initCamera(CAM_MODE_CAPTURE)) return;
   g_sdReady = initSdCard();
   if (!g_sdReady) {
     Serial.println("WARNING: SD not available. /record will return 503.");
@@ -767,7 +937,7 @@ void setup() {
 
   Serial.println();
   Serial.println("=== Serial capture loop active ===");
-  Serial.println("Controls: p=pause/resume  s=shuffle  d=delete-last  ?=help");
+  Serial.println("Controls: p=pause/resume  s=shuffle  d=delete-last  t=toggle test-model  ?=help");
   Serial.printf("Clip: %d frames @ %d fps  Pre: %ds  Rest: %ds\n",
                 kClipFrames, kClipFps, kPreCountdownSec, kRestSec);
   Serial.println();
@@ -775,5 +945,9 @@ void setup() {
 
 void loop() {
   server.handleClient();
-  runCaptureCycle();
+  if (g_camMode == CAM_MODE_INFERENCE) {
+    runInferenceCycle();
+  } else {
+    runCaptureCycle();
+  }
 }
