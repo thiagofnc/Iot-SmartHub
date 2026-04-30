@@ -51,9 +51,10 @@ bool initCamera() {
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_LATEST;
 
-  // Init at capture size (96x96) with fb_count=1: UXGA buffers + double-buffering
-  // forced oversized DMA per grab and returned stale frames, dominating /record latency.
-  config.frame_size = FRAMESIZE_96X96;
+  // OV2640 driver init only accepts a subset of frame sizes; 96x96 is reachable
+  // only via post-init sensor downscale (set_framesize below). Init at QVGA so
+  // buffers stay small but valid, and use fb_count=1 to avoid stale double-buffered frames.
+  config.frame_size = FRAMESIZE_QVGA;
   config.jpeg_quality = 12;
   config.fb_count = 1;
   config.fb_location = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
@@ -281,12 +282,16 @@ RecordResult recordClip(const String& label, int frames, int targetFps) {
     int32_t wait = static_cast<int32_t>(deadline) - static_cast<int32_t>(millis());
     if (wait > 0) delay(wait);
 
+    uint32_t t0 = millis();
     camera_fb_t* fb = esp_camera_fb_get();
+    uint32_t tGrab = millis() - t0;
     if (fb == nullptr) {
       ++r.nullFb;
       if (r.error.length() == 0) r.error = "null framebuffer";
+      Serial.printf("  frame %d: fb_get NULL after %ums\n", i, tGrab);
       continue;
     }
+    if (tGrab > 200) Serial.printf("  frame %d: slow grab %ums\n", i, tGrab);
     if (fb->len == 0) {
       ++r.nullFb;
       if (r.error.length() == 0) r.error = "empty framebuffer";
