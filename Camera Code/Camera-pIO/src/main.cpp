@@ -51,17 +51,12 @@ bool initCamera() {
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_LATEST;
 
-  if (psramFound()) {
-    config.frame_size = FRAMESIZE_UXGA;
-    config.jpeg_quality = 10;
-    config.fb_count = 2;
-    config.fb_location = CAMERA_FB_IN_PSRAM;
-  } else {
-    config.frame_size = FRAMESIZE_SVGA;
-    config.jpeg_quality = 12;
-    config.fb_count = 1;
-    config.fb_location = CAMERA_FB_IN_DRAM;
-  }
+  // Init at capture size (96x96) with fb_count=1: UXGA buffers + double-buffering
+  // forced oversized DMA per grab and returned stale frames, dominating /record latency.
+  config.frame_size = FRAMESIZE_96X96;
+  config.jpeg_quality = 12;
+  config.fb_count = 1;
+  config.fb_location = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
@@ -79,18 +74,39 @@ bool initCamera() {
 }
 
 bool initSdCard() {
-  // XIAO ESP32S3 Sense expansion board: built-in microSD slot uses SDIO,
-  // 1-bit mode shares fewer pins with the camera bus.
-  if (!SD_MMC.begin("/sdcard", true)) {
-    Serial.println("SD_MMC mount failed (1-bit mode).");
-    return false;
+  // XIAO ESP32S3 Sense expansion board built-in microSD slot.
+  // Per Seeed's wiki the slot uses fixed SDIO pins: CLK=GPIO7, CMD=GPIO9, D0=GPIO8.
+  // Pin them explicitly; auto-detection picks the wrong pins on some core versions.
+  SD_MMC.setPins(7, 9, 8);
+
+  // 1-bit mode, format-on-fail = false. Higher freq (40MHz) needed on some boards.
+  for (int attempt = 1; attempt <= 3; ++attempt) {
+    if (SD_MMC.begin("/sdcard", true, false, 40000)) {
+      uint8_t cardType = SD_MMC.cardType();
+      if (cardType == CARD_NONE) {
+        Serial.println("SD_MMC.begin returned ok but cardType=CARD_NONE. Card not seated?");
+        SD_MMC.end();
+        delay(200);
+        continue;
+      }
+      const char* typeStr = (cardType == CARD_MMC) ? "MMC" :
+                            (cardType == CARD_SD)  ? "SD"  :
+                            (cardType == CARD_SDHC)? "SDHC": "UNKNOWN";
+      Serial.printf("SD card mounted (%s), size: %lluMB\n", typeStr,
+                    SD_MMC.cardSize() / (1024ULL * 1024ULL));
+      goto mounted;
+    }
+    Serial.printf("SD_MMC.begin attempt %d failed.\n", attempt);
+    SD_MMC.end();
+    delay(300);
   }
-  uint8_t cardType = SD_MMC.cardType();
-  if (cardType == CARD_NONE) {
-    Serial.println("No SD card detected.");
-    return false;
-  }
-  Serial.printf("SD card mounted, size: %lluMB\n", SD_MMC.cardSize() / (1024ULL * 1024ULL));
+  Serial.println("SD_MMC mount failed after 3 attempts.");
+  Serial.println("  - Confirm card is FAT32 (not exFAT) and <=32GB or reformatted.");
+  Serial.println("  - Confirm card is fully seated in the Sense expansion slot.");
+  Serial.println("  - Confirm you are using the Sense expansion board, not a bare XIAO ESP32S3.");
+  return false;
+
+mounted:
 
   for (int i = 0; i < kLabelCount; ++i) {
     String dir = String("/dataset/") + kLabels[i];
@@ -234,8 +250,79 @@ void handleCapture() {
   esp_camera_fb_return(fb);
 }
 
+struct RecordResult {
+  String label;
+  String prefix;
+  uint32_t saved;
+  uint32_t requested;
+  uint32_t nullFb;
+  uint32_t openFail;
+  uint32_t elapsedMs;
+  String error;
+};
+
+bool isValidLabel(const String& label) {
+  for (int i = 0; i < kLabelCount; ++i) {
+    if (label == kLabels[i]) return true;
+  }
+  return false;
+}
+
+RecordResult recordClip(const String& label, int frames, int targetFps) {
+  RecordResult r{label, "", 0, (uint32_t)frames, 0, 0, 0, ""};
+  String dir = String("/dataset/") + label;
+  uint32_t timestamp = millis();
+  r.prefix = label + "_" + String(timestamp);
+  uint32_t frameInterval = 1000 / targetFps;
+  uint32_t firstFrameMs = millis();
+
+  for (int i = 1; i <= frames; ++i) {
+    uint32_t deadline = firstFrameMs + (i - 1) * frameInterval;
+    int32_t wait = static_cast<int32_t>(deadline) - static_cast<int32_t>(millis());
+    if (wait > 0) delay(wait);
+
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (fb == nullptr) {
+      ++r.nullFb;
+      if (r.error.length() == 0) r.error = "null framebuffer";
+      continue;
+    }
+    if (fb->len == 0) {
+      ++r.nullFb;
+      if (r.error.length() == 0) r.error = "empty framebuffer";
+      esp_camera_fb_return(fb);
+      continue;
+    }
+
+    char idx[12];
+    snprintf(idx, sizeof(idx), "_%03d.jpg", i);
+    String path = dir + "/" + r.prefix + idx;
+    File out = SD_MMC.open(path, FILE_WRITE);
+    if (!out) {
+      ++r.openFail;
+      if (r.error.length() == 0) r.error = String("open failed: ") + path;
+      Serial.printf("Failed to open %s for write\n", path.c_str());
+      esp_camera_fb_return(fb);
+      continue;
+    }
+    size_t written = out.write(fb->buf, fb->len);
+    out.close();
+    if (written != fb->len) {
+      ++r.openFail;
+      if (r.error.length() == 0) r.error = "short write (SD full?)";
+    } else {
+      ++r.saved;
+    }
+    esp_camera_fb_return(fb);
+  }
+
+  r.elapsedMs = millis() - firstFrameMs;
+  return r;
+}
+
 void handleRecord() {
   if (!g_sdReady) {
+    Serial.println("/record: SD not ready");
     sendPlain(503, "SD card not ready");
     return;
   }
@@ -248,53 +335,30 @@ void handleRecord() {
   int targetFps = server.hasArg("fps") ? server.arg("fps").toInt() : 15;
   if (frames < 1 || frames > 60) frames = 15;
   if (targetFps < 5 || targetFps > 30) targetFps = 15;
+  if (!isValidLabel(label)) { sendPlain(400, "Unknown label"); return; }
 
-  bool labelOk = false;
-  for (int i = 0; i < kLabelCount; ++i) {
-    if (label == kLabels[i]) { labelOk = true; break; }
+  RecordResult r = recordClip(label, frames, targetFps);
+  Serial.printf("/record %s: saved=%u/%u nullFb=%u openFail=%u elapsed=%ums\n",
+                r.label.c_str(), r.saved, r.requested, r.nullFb, r.openFail, r.elapsedMs);
+
+  int httpCode = (r.saved == r.requested) ? 200 : 207;
+  if (r.saved == 0) httpCode = 500;
+
+  String escapedErr;
+  for (size_t i = 0; i < r.error.length(); ++i) {
+    char c = r.error[i];
+    if (c == '"' || c == '\\') escapedErr += '\\';
+    escapedErr += c;
   }
-  if (!labelOk) {
-    sendPlain(400, "Unknown label");
-    return;
-  }
-
-  uint32_t timestamp = millis();
-  String prefix = label + "_" + String(timestamp);
-  String dir = String("/dataset/") + label;
-  uint32_t frameInterval = 1000 / targetFps;
-  uint32_t saved = 0;
-  uint32_t firstFrameMs = millis();
-
-  for (int i = 1; i <= frames; ++i) {
-    uint32_t deadline = firstFrameMs + (i - 1) * frameInterval;
-    int32_t wait = static_cast<int32_t>(deadline) - static_cast<int32_t>(millis());
-    if (wait > 0) delay(wait);
-
-    camera_fb_t* fb = esp_camera_fb_get();
-    if (fb == nullptr) continue;
-
-    char idx[8];
-    snprintf(idx, sizeof(idx), "_%03d.jpg", i);
-    String path = dir + "/" + prefix + idx;
-    File out = SD_MMC.open(path, FILE_WRITE);
-    if (out) {
-      out.write(fb->buf, fb->len);
-      out.close();
-      ++saved;
-    } else {
-      Serial.printf("Failed to open %s for write\n", path.c_str());
-    }
-    esp_camera_fb_return(fb);
-  }
-
-  uint32_t elapsed = millis() - firstFrameMs;
-  String body = String("{\"label\":\"") + label +
-                "\",\"prefix\":\"" + prefix +
-                "\",\"saved\":" + String(saved) +
-                ",\"requested\":" + String(frames) +
-                ",\"elapsed_ms\":" + String(elapsed) + "}";
-  server.send(200, "application/json", body);
-  Serial.printf("Saved %u/%d frames for %s in %ums\n", saved, frames, label.c_str(), elapsed);
+  String body = String("{\"label\":\"") + r.label +
+                "\",\"prefix\":\"" + r.prefix +
+                "\",\"saved\":" + String(r.saved) +
+                ",\"requested\":" + String(r.requested) +
+                ",\"null_fb\":" + String(r.nullFb) +
+                ",\"open_fail\":" + String(r.openFail) +
+                ",\"elapsed_ms\":" + String(r.elapsedMs) +
+                ",\"error\":\"" + escapedErr + "\"}";
+  server.send(httpCode, "application/json", body);
 }
 
 void handleCounts() {
@@ -513,79 +577,24 @@ void handleRoot() {
   html += F("a{color:#7cd4f2}");
   html += F("</style></head><body><div class=\"wrap\">");
   html += F("<h1>SmartHub Dataset Capture</h1>");
-  html += F("<div id=\"banner\">Starting...</div>");
+  // Capture is driven on-device over Serial. This page is preview + counts only.
+  html += F("<div id=\"banner\">Capture runs over Serial. Watch the serial monitor for prompts.</div>");
   html += F("<div class=\"row\">");
   html += F("<div class=\"col\"><img id=\"preview\" src=\"\"></div>");
   html += F("<div class=\"col\">");
-  html += F("<label>Clip duration (s)<input id=\"dur\" type=\"number\" value=\"1.0\" step=\"0.1\" min=\"0.5\"></label>");
-  html += F("<label>FPS<input id=\"fps\" type=\"number\" value=\"15\" min=\"5\" max=\"30\"></label>");
-  html += F("<label>Pre-clip countdown (s)<input id=\"pre\" type=\"number\" value=\"2\" min=\"1\"></label>");
-  html += F("<label>Inter-clip rest (s)<input id=\"rest\" type=\"number\" value=\"1\" min=\"0\"></label>");
-  html += F("<label><input id=\"shuffle\" type=\"checkbox\"> Shuffle gesture order</label>");
-  html += F("<div style=\"margin-top:12px\">");
-  html += F("<button class=\"stop\" onclick=\"toggle()\" id=\"toggleBtn\">PAUSE</button>");
-  html += F("<button class=\"sec\" onclick=\"deleteLast()\">Delete last clip</button></div>");
   html += F("<table id=\"counts\"></table>");
   html += F("<p><a href=\"/dataset.zip\">Download dataset.zip</a></p>");
   html += F("</div></div>");
   html += F("<script>");
-  html += F("const GESTURES=['up','down','lswipe','rswipe','rotate'];");
-  html += F("let running=true;let idx=0;let order=[...GESTURES];let lastLabel='idle';");
   html += F("const preview=document.getElementById('preview');");
-  html += F("function showPreview(on){preview.src=on?('/stream?t='+Date.now()):'';}");
-  html += F("function nextLabel(){");
-  html += F("  if(idx%2===1)return 'idle';");
-  html += F("  return order[Math.floor(idx/2)%order.length];");
-  html += F("}");
-  html += F("function buildOrder(shuf){");
-  html += F("  order=[...GESTURES];");
-  html += F("  if(shuf){for(let i=order.length-1;i>0;i--){let j=Math.floor(Math.random()*(i+1));[order[i],order[j]]=[order[j],order[i]];}}");
-  html += F("}");
-  html += F("function setBanner(t,cls){let b=document.getElementById('banner');b.textContent=t;b.className=cls||'';}");
+  html += F("preview.src='/stream?t='+Date.now();");
   html += F("async function refreshCounts(){");
   html += F("  try{let r=await fetch('/counts');let j=await r.json();");
   html += F("  let h='<tr><th>Gesture</th><th>Clips</th></tr>';");
   html += F("  for(let k of Object.keys(j))h+='<tr><td>'+k+'</td><td>'+j[k]+'</td></tr>';");
   html += F("  document.getElementById('counts').innerHTML=h;}catch(e){}");
   html += F("}");
-  html += F("function sleep(ms){return new Promise(r=>setTimeout(r,ms));}");
-  html += F("async function recordOne(label,frames,fps){");
-  html += F("  setBanner('RECORDING '+label.toUpperCase(),'rec');");
-  html += F("  showPreview(false);");
-  html += F("  let ok=false;");
-  html += F("  try{let ctrl=new AbortController();");
-  html += F("  let timer=setTimeout(()=>ctrl.abort(),Math.max(8000,frames*1000/fps*4));");
-  html += F("  let r=await fetch('/record?label='+label+'&frames='+frames+'&fps='+fps,{method:'POST',signal:ctrl.signal});");
-  html += F("  clearTimeout(timer);ok=r.ok;}catch(e){console.log('record err',e);}");
-  html += F("  showPreview(true);");
-  html += F("  return ok;");
-  html += F("}");
-  html += F("async function loop(){");
-  html += F("  while(true){");
-  html += F("    while(!running){setBanner('Paused');await sleep(300);}");
-  html += F("    let frames=Math.max(1,Math.round(parseFloat(document.getElementById('dur').value)*parseInt(document.getElementById('fps').value)));");
-  html += F("    let fps=parseInt(document.getElementById('fps').value);");
-  html += F("    let pre=Math.max(1,parseInt(document.getElementById('pre').value));");
-  html += F("    let rest=Math.max(0,parseInt(document.getElementById('rest').value));");
-  html += F("    let label=nextLabel();lastLabel=label;");
-  html += F("    for(let c=pre;c>0;c--){if(!running)break;setBanner('Get ready: '+label.toUpperCase()+'  '+c,'ready');await sleep(1000);}");
-  html += F("    if(!running)continue;");
-  html += F("    let ok=await recordOne(label,frames,fps);");
-  html += F("    await refreshCounts();");
-  html += F("    setBanner((ok?'Saved ':'FAILED ')+label.toUpperCase()+'. Rest...');");
-  html += F("    await sleep(rest*1000);");
-  html += F("    idx++;");
-  html += F("  }");
-  html += F("}");
-  html += F("function toggle(){running=!running;document.getElementById('toggleBtn').textContent=running?'PAUSE':'RESUME';document.getElementById('toggleBtn').className=running?'stop':'start';}");
-  html += F("async function deleteLast(){");
-  html += F("  showPreview(false);");
-  html += F("  try{let r=await fetch('/delete_last?label='+lastLabel,{method:'POST'});");
-  html += F("  let j=await r.json();");
-  html += F("  if(j.deleted)setBanner('Deleted '+j.prefix);else setBanner('Nothing to delete for '+lastLabel);}catch(e){}");
-  html += F("  await refreshCounts();showPreview(true);");
-  html += F("}");
-  html += F("buildOrder(false);refreshCounts();showPreview(true);loop();");
+  html += F("refreshCounts();setInterval(refreshCounts,3000);");
   html += F("</script></body></html>");
   server.send(200, "text/html", html);
 }
@@ -601,6 +610,135 @@ void startServer() {
   server.onNotFound([]() { sendPlain(404, "Not found"); });
   server.begin();
   Serial.println("Dataset capture HTTP server started.");
+}
+
+// ---- Serial-driven capture loop ----------------------------------------
+// Capture runs entirely on-device, driven by Serial output, so a flaky Wi-Fi
+// link can't stall the recording loop. The web server stays up for preview
+// and dataset.zip download, but is no longer in the capture path.
+
+constexpr const char* kGestureLabels[] = {"up", "down", "lswipe", "rswipe", "rotate"};
+constexpr int kGestureCount = sizeof(kGestureLabels) / sizeof(kGestureLabels[0]);
+
+constexpr int kClipFrames = 15;       // 1.0s @ 15fps
+constexpr int kClipFps = 15;
+constexpr int kPreCountdownSec = 2;
+constexpr int kRestSec = 1;
+
+bool g_capturePaused = false;
+bool g_shuffle = false;
+int g_gestureOrder[kGestureCount] = {0, 1, 2, 3, 4};
+int g_clipIdx = 0;             // alternates gesture / idle
+String g_lastLabel = "idle";
+
+void shuffleOrder() {
+  for (int i = kGestureCount - 1; i > 0; --i) {
+    int j = random(i + 1);
+    int tmp = g_gestureOrder[i];
+    g_gestureOrder[i] = g_gestureOrder[j];
+    g_gestureOrder[j] = tmp;
+  }
+}
+
+const char* nextLabel() {
+  if (g_clipIdx % 2 == 1) return "idle";
+  int slot = (g_clipIdx / 2) % kGestureCount;
+  return kGestureLabels[g_gestureOrder[slot]];
+}
+
+void toUpper(char* s) { for (; *s; ++s) *s = toupper(*s); }
+
+void pollSerialControls() {
+  while (Serial.available()) {
+    int c = Serial.read();
+    if (c < 0) break;
+    switch (c) {
+      case 'p': case 'P':
+        g_capturePaused = !g_capturePaused;
+        Serial.printf("[CTRL]  %s\n", g_capturePaused ? "Paused" : "Resumed");
+        break;
+      case 's': case 'S':
+        g_shuffle = !g_shuffle;
+        if (g_shuffle) shuffleOrder();
+        else { for (int i = 0; i < kGestureCount; ++i) g_gestureOrder[i] = i; }
+        Serial.printf("[CTRL]  Shuffle %s\n", g_shuffle ? "on" : "off");
+        break;
+      case 'd': case 'D': {
+        String prefix = lastClipPrefixForLabel(g_lastLabel.c_str());
+        bool ok = deleteClip(g_lastLabel.c_str(), prefix);
+        Serial.printf("[CTRL]  Delete last %s: %s (%s)\n",
+                      g_lastLabel.c_str(), ok ? "ok" : "nothing",
+                      prefix.length() ? prefix.c_str() : "-");
+        break;
+      }
+      case '?': case 'h': case 'H':
+        Serial.println("[HELP]  p=pause/resume  s=shuffle  d=delete-last  ?=help");
+        break;
+      default:
+        break;  // ignore newlines, stray chars
+    }
+  }
+}
+
+// Sleep `ms` milliseconds while still pumping Serial controls and the web server.
+void interruptibleDelay(uint32_t ms) {
+  uint32_t end = millis() + ms;
+  while ((int32_t)(end - millis()) > 0) {
+    pollSerialControls();
+    server.handleClient();
+    delay(10);
+  }
+}
+
+void runCaptureCycle() {
+  pollSerialControls();
+  if (g_capturePaused) {
+    static uint32_t lastNote = 0;
+    if (millis() - lastNote > 2000) {
+      Serial.println("[PAUSE] (press p to resume)");
+      lastNote = millis();
+    }
+    delay(100);
+    return;
+  }
+  if (!g_sdReady) {
+    Serial.println("[ERR]   SD not ready; capture loop idle");
+    delay(2000);
+    return;
+  }
+
+  String label = String(nextLabel());
+  g_lastLabel = label;
+  char upper[16];
+  strncpy(upper, label.c_str(), sizeof(upper) - 1);
+  upper[sizeof(upper) - 1] = '\0';
+  toUpper(upper);
+
+  for (int c = kPreCountdownSec; c > 0; --c) {
+    pollSerialControls();
+    if (g_capturePaused) return;
+    Serial.printf("[READY] Get ready: %-7s %d\n", upper, c);
+    interruptibleDelay(1000);
+    if (g_capturePaused) return;
+  }
+
+  Serial.printf("[REC]   RECORDING %s\n", upper);
+  RecordResult r = recordClip(label, kClipFrames, kClipFps);
+
+  if (r.saved == r.requested) {
+    Serial.printf("[OK]    Saved %s (%u/%u) in %ums\n",
+                  r.prefix.c_str(), r.saved, r.requested, r.elapsedMs);
+  } else {
+    Serial.printf("[FAIL]  %s (%u/%u) in %ums err=%s\n",
+                  r.prefix.c_str(), r.saved, r.requested, r.elapsedMs,
+                  r.error.length() ? r.error.c_str() : "-");
+  }
+
+  if (kRestSec > 0) {
+    Serial.printf("[REST]  %ds...\n", kRestSec);
+    interruptibleDelay(kRestSec * 1000);
+  }
+  ++g_clipIdx;
 }
 
 }  // namespace
@@ -621,8 +759,16 @@ void setup() {
   }
   if (!connectWiFi()) return;
   startServer();
+
+  Serial.println();
+  Serial.println("=== Serial capture loop active ===");
+  Serial.println("Controls: p=pause/resume  s=shuffle  d=delete-last  ?=help");
+  Serial.printf("Clip: %d frames @ %d fps  Pre: %ds  Rest: %ds\n",
+                kClipFrames, kClipFps, kPreCountdownSec, kRestSec);
+  Serial.println();
 }
 
 void loop() {
   server.handleClient();
+  runCaptureCycle();
 }
