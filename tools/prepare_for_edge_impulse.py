@@ -37,6 +37,19 @@ def main(src: Path, dst: Path) -> int:
 
     dst.mkdir(parents=True, exist_ok=True)
 
+    total_files = 0
+    for label in LABELS:
+        label_dir = src / label
+        if not label_dir.is_dir():
+            continue
+
+        files = [
+            jpg
+            for jpg in sorted(label_dir.iterdir())
+            if jpg.is_file() and jpg.suffix.lower().startswith(".j")
+        ]
+        total_files += len(files)
+
     total = 0
     skipped = 0
     per_label: dict[str, int] = {label: 0 for label in LABELS}
@@ -73,6 +86,7 @@ def main(src: Path, dst: Path) -> int:
             shutil.copyfile(jpg, dst / new_name)
             per_label[label] += 1
             total += 1
+            print(f"[{total}/{total_files}] Copied {jpg} -> {new_name}", flush=True)
 
     print(f"\nCopied {total} files to {dst}")
     print(f"Skipped (non-jpg): {skipped}")
