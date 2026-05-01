@@ -140,13 +140,8 @@ bool initSdCard() {
 
 mounted:
 
-  for (int i = 0; i < kLabelCount; ++i) {
-    String dir = String("/dataset/") + kLabels[i];
-    if (!SD_MMC.exists(dir)) {
-      SD_MMC.mkdir("/dataset");
-      SD_MMC.mkdir(dir);
-    }
-  }
+  if (!SD_MMC.exists("/dataset")) SD_MMC.mkdir("/dataset");
+  if (!SD_MMC.exists("/dataset/new_data")) SD_MMC.mkdir("/dataset/new_data");
   return true;
 }
 
@@ -648,41 +643,21 @@ void startServer() {
   Serial.println("Dataset capture HTTP server started.");
 }
 
-// ---- Serial-driven capture loop ----------------------------------------
-// Capture runs entirely on-device, driven by Serial output, so a flaky Wi-Fi
-// link can't stall the recording loop. The web server stays up for preview
-// and dataset.zip download, but is no longer in the capture path.
+// ---- Continuous capture loop ------------------------------------------
+// Stream raw frames to /dataset/new_data/ at a fixed rate. No labeling,
+// no countdowns — every frame is saved as a JPEG and a Serial line is
+// emitted per save so the host can monitor progress.
 
-constexpr const char* kGestureLabels[] = {"up", "down", "lswipe", "rswipe", "rotate"};
-constexpr int kGestureCount = sizeof(kGestureLabels) / sizeof(kGestureLabels[0]);
-
-constexpr int kClipFrames = 15;       // 1.0s @ 15fps
-constexpr int kClipFps = 15;
-constexpr int kPreCountdownSec = 2;
-constexpr int kRestSec = 1;
+constexpr int kStreamTargetFps = 15;
+constexpr uint32_t kStreamFrameIntervalMs = 1000 / kStreamTargetFps;
+constexpr const char* kStreamDir = "/dataset/new_data";
+constexpr uint32_t kStreamMaxFrames = 2000;  // hard cap per boot
 
 bool g_capturePaused = false;
-bool g_shuffle = false;
-int g_gestureOrder[kGestureCount] = {0, 1, 2, 3, 4};
-int g_clipIdx = 0;             // alternates gesture / idle
-String g_lastLabel = "idle";
-
-void shuffleOrder() {
-  for (int i = kGestureCount - 1; i > 0; --i) {
-    int j = random(i + 1);
-    int tmp = g_gestureOrder[i];
-    g_gestureOrder[i] = g_gestureOrder[j];
-    g_gestureOrder[j] = tmp;
-  }
-}
-
-const char* nextLabel() {
-  if (g_clipIdx % 2 == 1) return "idle";
-  int slot = (g_clipIdx / 2) % kGestureCount;
-  return kGestureLabels[g_gestureOrder[slot]];
-}
-
-void toUpper(char* s) { for (; *s; ++s) *s = toupper(*s); }
+bool g_streamCapReached = false;
+uint32_t g_streamSeq = 0;          // sequential index within this boot
+uint32_t g_streamBootStamp = 0;    // millis at first save, used as filename prefix
+uint32_t g_streamNextDeadlineMs = 0;
 
 // Forward decl for the test-model toggle.
 bool switchToInferenceMode();
@@ -697,40 +672,16 @@ void pollSerialControls() {
         g_capturePaused = !g_capturePaused;
         Serial.printf("[CTRL]  %s\n", g_capturePaused ? "Paused" : "Resumed");
         break;
-      case 's': case 'S':
-        g_shuffle = !g_shuffle;
-        if (g_shuffle) shuffleOrder();
-        else { for (int i = 0; i < kGestureCount; ++i) g_gestureOrder[i] = i; }
-        Serial.printf("[CTRL]  Shuffle %s\n", g_shuffle ? "on" : "off");
-        break;
-      case 'd': case 'D': {
-        String prefix = lastClipPrefixForLabel(g_lastLabel.c_str());
-        bool ok = deleteClip(g_lastLabel.c_str(), prefix);
-        Serial.printf("[CTRL]  Delete last %s: %s (%s)\n",
-                      g_lastLabel.c_str(), ok ? "ok" : "nothing",
-                      prefix.length() ? prefix.c_str() : "-");
-        break;
-      }
       case 't': case 'T':
         if (g_camMode == CAM_MODE_CAPTURE) switchToInferenceMode();
         else                               switchToCaptureMode();
         break;
       case '?': case 'h': case 'H':
-        Serial.println("[HELP]  p=pause/resume  s=shuffle  d=delete-last  t=toggle test-model  ?=help");
+        Serial.println("[HELP]  p=pause/resume  t=toggle test-model  ?=help");
         break;
       default:
         break;  // ignore newlines, stray chars
     }
-  }
-}
-
-// Sleep `ms` milliseconds while still pumping Serial controls and the web server.
-void interruptibleDelay(uint32_t ms) {
-  uint32_t end = millis() + ms;
-  while ((int32_t)(end - millis()) > 0) {
-    pollSerialControls();
-    server.handleClient();
-    delay(10);
   }
 }
 
@@ -750,39 +701,65 @@ void runCaptureCycle() {
     delay(2000);
     return;
   }
-
-  String label = String(nextLabel());
-  g_lastLabel = label;
-  char upper[16];
-  strncpy(upper, label.c_str(), sizeof(upper) - 1);
-  upper[sizeof(upper) - 1] = '\0';
-  toUpper(upper);
-
-  for (int c = kPreCountdownSec; c > 0; --c) {
-    pollSerialControls();
-    if (g_capturePaused) return;
-    Serial.printf("[READY] Get ready: %-7s %d\n", upper, c);
-    interruptibleDelay(1000);
-    if (g_capturePaused) return;
+  if (g_streamSeq >= kStreamMaxFrames) {
+    if (!g_streamCapReached) {
+      Serial.printf("[DONE]  reached cap of %u frames; idling. Reset board to record more.\n",
+                    static_cast<unsigned>(kStreamMaxFrames));
+      g_streamCapReached = true;
+    }
+    delay(500);
+    return;
   }
 
-  Serial.printf("[REC]   RECORDING %s\n", upper);
-  RecordResult r = recordClip(label, kClipFrames, kClipFps);
+  uint32_t now = millis();
+  if (g_streamNextDeadlineMs == 0) g_streamNextDeadlineMs = now;
+  int32_t wait = static_cast<int32_t>(g_streamNextDeadlineMs) - static_cast<int32_t>(now);
+  if (wait > 0) {
+    delay(wait);
+    now = millis();
+  }
+  g_streamNextDeadlineMs = now + kStreamFrameIntervalMs;
 
-  if (r.saved == r.requested) {
-    Serial.printf("[OK]    Saved %s (%u/%u) in %ums\n",
-                  r.prefix.c_str(), r.saved, r.requested, r.elapsedMs);
+  uint32_t t0 = millis();
+  camera_fb_t* fb = esp_camera_fb_get();
+  uint32_t tGrab = millis() - t0;
+  if (fb == nullptr) {
+    Serial.printf("[ERR]   fb_get NULL after %ums\n", tGrab);
+    return;
+  }
+  if (fb->len == 0) {
+    Serial.println("[ERR]   empty framebuffer");
+    esp_camera_fb_return(fb);
+    return;
+  }
+
+  if (g_streamBootStamp == 0) g_streamBootStamp = millis();
+  ++g_streamSeq;
+
+  char filename[64];
+  snprintf(filename, sizeof(filename), "%s/%lu_%06lu.jpg",
+           kStreamDir,
+           static_cast<unsigned long>(g_streamBootStamp),
+           static_cast<unsigned long>(g_streamSeq));
+
+  File out = SD_MMC.open(filename, FILE_WRITE);
+  if (!out) {
+    Serial.printf("[ERR]   open failed: %s\n", filename);
+    esp_camera_fb_return(fb);
+    return;
+  }
+  size_t written = out.write(fb->buf, fb->len);
+  out.close();
+  esp_camera_fb_return(fb);
+
+  if (written == fb->len) {
+    Serial.printf("[SAVE]  %s (%u bytes, grab=%ums)\n",
+                  filename, static_cast<unsigned>(written), tGrab);
   } else {
-    Serial.printf("[FAIL]  %s (%u/%u) in %ums err=%s\n",
-                  r.prefix.c_str(), r.saved, r.requested, r.elapsedMs,
-                  r.error.length() ? r.error.c_str() : "-");
+    Serial.printf("[FAIL]  short write %s (%u/%u, SD full?)\n",
+                  filename, static_cast<unsigned>(written),
+                  static_cast<unsigned>(fb->len));
   }
-
-  if (kRestSec > 0) {
-    Serial.printf("[REST]  %ds...\n", kRestSec);
-    interruptibleDelay(kRestSec * 1000);
-  }
-  ++g_clipIdx;
 }
 
 // ---- Test-model (FOMO inference) loop ----------------------------------
@@ -936,10 +913,11 @@ void setup() {
   startServer();
 
   Serial.println();
-  Serial.println("=== Serial capture loop active ===");
-  Serial.println("Controls: p=pause/resume  s=shuffle  d=delete-last  t=toggle test-model  ?=help");
-  Serial.printf("Clip: %d frames @ %d fps  Pre: %ds  Rest: %ds\n",
-                kClipFrames, kClipFps, kPreCountdownSec, kRestSec);
+  Serial.println("=== Continuous capture active ===");
+  Serial.println("Controls: p=pause/resume  t=toggle test-model  ?=help");
+  Serial.printf("Streaming to %s @ %d fps, cap %u frames per boot\n",
+                kStreamDir, kStreamTargetFps,
+                static_cast<unsigned>(kStreamMaxFrames));
   Serial.println();
 }
 
