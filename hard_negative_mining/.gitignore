@@ -1,0 +1,5 @@
+# Hard-negative mining frames captured by tools/live_viewer.py.
+# Track the folder, not its contents — captures are local-only and you upload
+# them to Edge Impulse from your machine.
+*
+!.gitignore
