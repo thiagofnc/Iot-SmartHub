@@ -856,7 +856,6 @@ void runInferenceCycle() {
   }
 
   rgb565ToPackedFloats(fb->buf, kEiPixels, g_eiFeatures);
-  esp_camera_fb_return(fb);
 
   signal_t signal;
   signal.total_length = kEiPixels;
@@ -866,6 +865,7 @@ void runInferenceCycle() {
   EI_IMPULSE_ERROR rc = run_classifier(&signal, &result, false);
   if (rc != EI_IMPULSE_OK) {
     Serial.printf("[INF]   run_classifier failed (%d)\n", rc);
+    esp_camera_fb_return(fb);
     delay(100);
     return;
   }
@@ -883,20 +883,26 @@ void runInferenceCycle() {
     ++hits;
   }
 
-  if (hits == 0 || sumW <= 0.0f) {
-    Serial.println("NO HAND");
-  } else {
-    float cx = sumX / sumW;
-    float cy = sumY / sumW;
-    Serial.printf("HAND %.1f,%.1f (n=%u, dsp=%dms inf=%dms)\n",
-                  cx, cy, hits, result.timing.dsp, result.timing.classification);
-  }
+  bool hasHand = (hits > 0 && sumW > 0.0f);
+  float cx = hasHand ? sumX / sumW : 0.0f;
+  float cy = hasHand ? sumY / sumW : 0.0f;
+
+  // Always dump frames in inference mode — consumed by tools/live_viewer.py.
+  // Header is plain text so a human can still grep the serial log; payload
+  // is raw RGB565 (little-endian as stored in the framebuffer).
+  Serial.printf("FRAME %u %d %.2f %.2f\n",
+                static_cast<unsigned>(fb->len),
+                hasHand ? 1 : 0, cx, cy);
+  Serial.write(fb->buf, fb->len);
+  Serial.write('\n');
+
+  esp_camera_fb_return(fb);
 }
 
 }  // namespace
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(921600);
   delay(500);
   Serial.println();
   Serial.println("SmartHub XIAO ESP32S3 Sense dataset capture firmware");
