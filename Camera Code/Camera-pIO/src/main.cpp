@@ -96,8 +96,8 @@ bool initCamera(CameraMode mode) {
       sensor->set_quality(sensor, 12);
       sensor->set_special_effect(sensor, 2);  // grayscale
     } else {
-      // Already 96x96 from init; just make sure no effect is applied.
-      sensor->set_special_effect(sensor, 0);
+      // Match capture-mode preprocessing: model was trained on grayscale 96x96.
+      sensor->set_special_effect(sensor, 2);  // grayscale
     }
   }
   g_camMode = mode;
@@ -797,9 +797,15 @@ int eiSignalGetData(size_t offset, size_t length, float* out) {
 // RGB565 framebuffers from esp_camera are stored byte-swapped: the high byte
 // comes second in memory. Reconstruct the 16-bit pixel before unpacking.
 void rgb565ToPackedFloats(const uint8_t* fb, size_t pixelCount, float* out) {
+  // ESP32 camera RGB565 framebuffers are stored byte-swapped: the high byte
+  // of the 16-bit pixel comes FIRST in memory. The Edge Impulse FOMO image
+  // block expects packed RGB888 floats (one float per pixel, value =
+  // (r<<16)|(g<<8)|b). For a grayscale model trained on this firmware's
+  // capture pipeline, the sensor's grayscale special_effect makes R≈G≈B,
+  // so the packed value carries the luminance EI's grayscale block expects.
   for (size_t i = 0; i < pixelCount; ++i) {
-    uint16_t hi = fb[i * 2 + 1];
-    uint16_t lo = fb[i * 2];
+    uint16_t hi = fb[i * 2];
+    uint16_t lo = fb[i * 2 + 1];
     uint16_t px = (hi << 8) | lo;
     uint8_t r = ((px & 0xF800) >> 8) | ((px & 0xE000) >> 13);
     uint8_t g = ((px & 0x07E0) >> 3) | ((px & 0x0600) >> 9);
