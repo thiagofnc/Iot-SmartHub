@@ -9,9 +9,14 @@ Usage:
     python tools/live_viewer.py /dev/ttyACM0
 
 The script connects, sends 't' over serial to put the device in inference mode
-(if it isn't already), then renders frames as they arrive. Press 'q' in the
-window to quit. Make sure no other process is holding the port (close the
-PlatformIO serial monitor before running).
+(if it isn't already), then renders frames as they arrive. Make sure no other
+process is holding the port (close the PlatformIO serial monitor first).
+
+Keys (focus the OpenCV window):
+    q  quit
+    s  save the current frame to hard_negative_mining/ for retraining
+       (use this whenever the model makes a wrong prediction — those frames
+        become hard examples for the next training run)
 
 Wire format per frame, emitted by main.cpp::runInferenceCycle whenever the
 device is in inference mode:
@@ -22,6 +27,7 @@ device is in inference mode:
 
 import sys
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -32,6 +38,9 @@ WIDTH = 96
 HEIGHT = 96
 DISPLAY_SCALE = 6  # 96 -> 576 px window
 EXPECTED_BYTES = WIDTH * HEIGHT * 2
+
+# Hard-negative mining output: <repo_root>/hard_negative_mining/
+SAVE_DIR = Path(__file__).resolve().parent.parent / "hard_negative_mining"
 
 
 def rgb565_to_bgr(buf: bytes) -> np.ndarray:
@@ -126,34 +135,47 @@ def main() -> int:
     ser.write(b"t")
     print("Sent 't' to enter inference mode. Waiting for frames...")
 
+    SAVE_DIR.mkdir(parents=True, exist_ok=True)
+
     window = "SmartHub Live"
     cv2.namedWindow(window, cv2.WINDOW_AUTOSIZE)
 
     frame_count = 0
+    saved_count = 0
+    last_gray = None  # most recent 96x96 single-channel frame, ready to save
+
     while True:
         frame = read_frame(ser)
-        if frame is None:
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-            continue
 
-        frame_count += 1
-        if frame_count % 10 == 0:
-            print(f"frames received: {frame_count}")
+        if frame is not None:
+            frame_count += 1
+            if frame_count % 10 == 0:
+                print(f"frames received: {frame_count}")
 
-        payload, has_hand, cx, cy = frame
-        bgr = rgb565_to_bgr(payload)
-        big = cv2.resize(
-            bgr,
-            (WIDTH * DISPLAY_SCALE, HEIGHT * DISPLAY_SCALE),
-            interpolation=cv2.INTER_NEAREST,
-        )
-        if has_hand:
-            draw_centroid(big, cx, cy)
+            payload, has_hand, cx, cy = frame
+            bgr = rgb565_to_bgr(payload)
+            # The sensor is in grayscale mode so R==G==B; pull one channel
+            # to write a true single-channel PNG for retraining.
+            last_gray = bgr[:, :, 0].copy()
 
-        cv2.imshow(window, big)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+            big = cv2.resize(
+                bgr,
+                (WIDTH * DISPLAY_SCALE, HEIGHT * DISPLAY_SCALE),
+                interpolation=cv2.INTER_NEAREST,
+            )
+            if has_hand:
+                draw_centroid(big, cx, cy)
+            cv2.imshow(window, big)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("q"):
             break
+        if key == ord("s") and last_gray is not None:
+            ts = time.strftime("%Y%m%d_%H%M%S") + f"_{int(time.time() * 1000) % 1000:03d}"
+            path = SAVE_DIR / f"hard_{ts}.png"
+            cv2.imwrite(str(path), last_gray)
+            saved_count += 1
+            print(f"[SAVE] {path.name}  (total saved: {saved_count})")
 
     ser.close()
     cv2.destroyAllWindows()
