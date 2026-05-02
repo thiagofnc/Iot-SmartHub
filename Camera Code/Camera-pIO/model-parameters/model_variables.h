@@ -144,7 +144,7 @@ const ei_impulse_t impulse_979813_1 = {
     .project_name = "IoT project",
     .impulse_id = 1,
     .impulse_name = "Impulse #1",
-    .deploy_version = 3,
+    .deploy_version = 5,
 
     .nn_input_frame_size = 27648,
     .raw_sample_count = 9216,
