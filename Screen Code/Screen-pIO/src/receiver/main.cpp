@@ -5,8 +5,10 @@ Receiver_Main receiverApp;
 
 void setup() {
     Serial.begin(115200);
-    delay(1000);
-    Serial.println("--- Starting Remote LoRa Receiver ---");
+    // USB CDC (Serial) takes a moment to initialize on the PC side. 
+    // Wait longer so you can open the monitor and see the startup messages.
+    delay(3000); 
+    Serial.println("\n\n--- Starting Remote LoRa Receiver ---");
     
     receiverApp.init();
 }

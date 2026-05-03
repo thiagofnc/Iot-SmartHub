@@ -16,6 +16,10 @@ private:
     BLE_Cam_Receiver camReceiver;
     Local_Light_Sensor lightSensor;
 
+    bool motorEnabled;
+    unsigned long lastMotorMove;
+    int motorStep;
+
 public:
     Receiver_Main();
     void init();
