@@ -15,6 +15,7 @@ constexpr unsigned long debounceMs = 50;
 
 const char *ssid = "RHIT-OPEN";
 const char *password = "";
+const char *samsungWatchMacAddress = "24:11:53:C0:DF:EE";
 
 Adafruit_SSD1306 display(screenWidth, screenHeight, &Wire, RST_OLED);
 
@@ -150,7 +151,9 @@ void setup() {
     refreshDisplay();
   });
 
-  bluetoothConnection.begin();
+  BluetoothConnection::Config bluetoothConfig;
+  bluetoothConfig.targetMacAddress = samsungWatchMacAddress;
+  bluetoothConnection.begin(bluetoothConfig);
   wifiConnection.begin(ssid, password);
   Serial.println("BLE SmartHub is advertising");
 
