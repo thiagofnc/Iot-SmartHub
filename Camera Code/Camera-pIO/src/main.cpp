@@ -23,6 +23,11 @@ constexpr const char* kLabels[] = {"up", "down", "lswipe", "rswipe", "rotate", "
 constexpr int kLabelCount = sizeof(kLabels) / sizeof(kLabels[0]);
 constexpr int kIdleIndex = 5;
 
+// Local override of the FOMO detection threshold. Don't edit
+// EI_CLASSIFIER_OBJECT_DETECTION_THRESHOLD in model_metadata.h — that file is
+// regenerated on every Edge Impulse model export.
+constexpr float kHandConfThreshold = 0.75f;
+
 bool g_sdReady = false;
 
 void sendPlain(int code, const char* message) {
@@ -825,8 +830,7 @@ bool switchToInferenceMode() {
     return false;
   }
   Serial.printf("[MODE]  inference active (input %dx%d, threshold %.2f)\n",
-                kEiInputW, kEiInputH,
-                (float)EI_CLASSIFIER_OBJECT_DETECTION_THRESHOLD);
+                kEiInputW, kEiInputH, kHandConfThreshold);
   Serial.println("[MODE]  press 't' again to return to capture mode.");
   return true;
 }
@@ -880,7 +884,7 @@ void runInferenceCycle() {
   uint32_t hits = 0;
   for (uint32_t i = 0; i < result.bounding_boxes_count; ++i) {
     const auto& bb = result.bounding_boxes[i];
-    if (bb.value < EI_CLASSIFIER_OBJECT_DETECTION_THRESHOLD) continue;
+    if (bb.value < kHandConfThreshold) continue;
     float cx = bb.x + bb.width  * 0.5f;
     float cy = bb.y + bb.height * 0.5f;
     sumX += cx * bb.value;

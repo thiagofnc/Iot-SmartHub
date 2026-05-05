@@ -1,0 +1,5 @@
+# Continuous recordings captured by tools/live_viewer.py (press 'r' to toggle).
+# Track the folder, not its contents — recordings are local-only and can grow
+# very large since they save every received frame.
+*
+!.gitignore

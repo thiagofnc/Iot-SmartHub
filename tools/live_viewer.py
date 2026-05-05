@@ -17,6 +17,8 @@ Keys (focus the OpenCV window):
     s  save the current frame to hard_negative_mining/ for retraining
        (use this whenever the model makes a wrong prediction — those frames
         become hard examples for the next training run)
+    r  toggle continuous recording: save every received frame to recordings/
+       until 'r' is pressed again
 
 Wire format per frame, emitted by main.cpp::runInferenceCycle whenever the
 device is in inference mode:
@@ -41,6 +43,8 @@ EXPECTED_BYTES = WIDTH * HEIGHT * 2
 
 # Hard-negative mining output: <repo_root>/hard_negative_mining/
 SAVE_DIR = Path(__file__).resolve().parent.parent / "hard_negative_mining"
+# Continuous recording output: <repo_root>/recordings/
+RECORD_DIR = Path(__file__).resolve().parent.parent / "recordings"
 
 
 def rgb565_to_bgr(buf: bytes) -> np.ndarray:
@@ -136,6 +140,7 @@ def main() -> int:
     print("Sent 't' to enter inference mode. Waiting for frames...")
 
     SAVE_DIR.mkdir(parents=True, exist_ok=True)
+    RECORD_DIR.mkdir(parents=True, exist_ok=True)
 
     window = "SmartHub Live"
     cv2.namedWindow(window, cv2.WINDOW_AUTOSIZE)
@@ -143,6 +148,10 @@ def main() -> int:
     frame_count = 0
     saved_count = 0
     last_gray = None  # most recent 96x96 single-channel frame, ready to save
+
+    recording = False
+    record_session_ts = ""  # set when recording starts; used as filename prefix
+    record_frame_idx = 0    # frames saved in the current recording session
 
     while True:
         frame = read_frame(ser)
@@ -157,6 +166,11 @@ def main() -> int:
             # The sensor is in grayscale mode so R==G==B; pull one channel
             # to write a true single-channel PNG for retraining.
             last_gray = bgr[:, :, 0].copy()
+
+            if recording:
+                path = RECORD_DIR / f"rec_{record_session_ts}_{record_frame_idx:06d}.png"
+                cv2.imwrite(str(path), last_gray)
+                record_frame_idx += 1
 
             big = cv2.resize(
                 bgr,
@@ -176,6 +190,14 @@ def main() -> int:
             cv2.imwrite(str(path), last_gray)
             saved_count += 1
             print(f"[SAVE] {path.name}  (total saved: {saved_count})")
+        if key == ord("r"):
+            recording = not recording
+            if recording:
+                record_session_ts = time.strftime("%Y%m%d_%H%M%S")
+                record_frame_idx = 0
+                print(f"[REC] started — session {record_session_ts}")
+            else:
+                print(f"[REC] stopped — {record_frame_idx} frames saved to {RECORD_DIR}")
 
     ser.close()
     cv2.destroyAllWindows()
