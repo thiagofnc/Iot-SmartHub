@@ -2,6 +2,7 @@
 #define BLUETOOTH_CONNECTION_H
 
 #include <Arduino.h>
+#include <BLEAdvertisedDevice.h>
 
 class BluetoothConnection {
 public:
@@ -15,6 +16,9 @@ public:
     const char *txCharacteristicUuid = "9b5f54c7-0f72-4f54-9d2f-b15d6fdd8f23";
     const char *targetMacAddress = nullptr;
     unsigned long targetReconnectIntervalMs = 10000;
+    bool scanNearbyDevices = true;
+    unsigned long scanIntervalMs = 2000;
+    uint32_t scanDurationSeconds = 1;
   };
 
   void begin();
@@ -23,6 +27,8 @@ public:
 
   bool isConnected() const;
   bool isTargetConnected() const;
+  String getTargetDeviceName() const;
+  String getTargetModelNumber() const;
   void connectToTarget(const char *macAddress);
   void sendMessage(const String &message);
 
@@ -40,6 +46,10 @@ private:
   void handleTargetDisconnect();
   void handleMessage(const String &message);
   void attemptTargetConnection();
+  void attemptTargetConnection(BLEAdvertisedDevice &device);
+  void dumpTargetGatt();
+  void readTargetDeviceInfo();
+  void scanNearbyDevices();
 
   MessageHandler messageHandler = nullptr;
   ConnectionHandler connectionHandler = nullptr;
@@ -47,9 +57,18 @@ private:
   bool targetConnected = false;
   bool shouldRestartAdvertising = false;
   bool targetConnectionEnabled = false;
+  bool nearbyScanEnabled = false;
+  bool targetAutoConnectBlocked = false;
+  bool shouldDumpTargetGatt = false;
+  int targetConnectFailures = 0;
   String targetMacAddress;
+  String targetDeviceName = "--";
+  String targetModelNumber = "--";
   unsigned long targetReconnectIntervalMs = 10000;
   unsigned long lastTargetConnectAttempt = 0;
+  unsigned long scanIntervalMs = 2000;
+  uint32_t scanDurationSeconds = 1;
+  unsigned long lastScanStarted = 0;
 };
 
 extern BluetoothConnection bluetoothConnection;

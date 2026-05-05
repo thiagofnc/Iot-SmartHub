@@ -15,11 +15,10 @@ constexpr unsigned long debounceMs = 50;
 
 const char *ssid = "RHIT-OPEN";
 const char *password = "";
-const char *samsungWatchMacAddress = "24:11:53:C0:DF:EE";
 
 Adafruit_SSD1306 display(screenWidth, screenHeight, &Wire, RST_OLED);
 
-String lastAction = "Waiting for BLE text";
+String lastAction = "Scanning for watch";
 bool bleConnected = false;
 
 bool lastButtonReading = HIGH;
@@ -71,24 +70,15 @@ void refreshDisplay() {
   display.print("ESP32 SmartHub");
 
   display.setCursor(0, 12);
-  display.print(bleConnected ? "BLE: Connected" : "BLE: Advertising");
+  display.print(bluetoothConnection.isTargetConnected() ? "Watch: Connected" : "Watch: Scanning");
 
   display.setCursor(0, 24);
-  display.print("WiFi: ");
-  display.print(wifiConnection.isConnected() ? wifiConnection.getIpAddress() : "No WiFi");
+  display.print("Name: ");
+  display.print(bluetoothConnection.getTargetDeviceName());
 
   display.setCursor(0, 36);
-  display.print("iPhone Batt: ");
-  int phoneBattery = wifiConnection.getPhoneBattery();
-
-  if (phoneBattery >= 0) {
-    display.print(phoneBattery);
-    display.print("%");
-  } else {
-    display.print("--%");
-  }
-
-  drawWrappedText(46, lastAction);
+  display.print("Model: ");
+  display.print(bluetoothConnection.getTargetModelNumber());
 
   display.display();
 }
@@ -138,7 +128,7 @@ void setup() {
 
   bluetoothConnection.onConnectionChanged([](bool connected) {
     bleConnected = connected;
-    lastAction = connected ? "Connected to phone" : "Waiting for BLE text";
+    lastAction = connected ? "BLE peer connected" : "Scanning for watch";
     Serial.println(connected ? "BLE device connected" : "BLE device disconnected");
     refreshDisplay();
   });
@@ -152,7 +142,6 @@ void setup() {
   });
 
   BluetoothConnection::Config bluetoothConfig;
-  bluetoothConfig.targetMacAddress = samsungWatchMacAddress;
   bluetoothConnection.begin(bluetoothConfig);
   wifiConnection.begin(ssid, password);
   Serial.println("BLE SmartHub is advertising");

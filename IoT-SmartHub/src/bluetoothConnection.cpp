@@ -4,16 +4,26 @@
 #include <BLEAddress.h>
 #include <BLEClient.h>
 #include <BLEDevice.h>
+#include <BLEScan.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
+#include <BLERemoteCharacteristic.h>
+#include <BLERemoteService.h>
 
 namespace {
 BLEServer *server = nullptr;
 BLECharacteristic *txCharacteristic = nullptr;
 BLEClient *targetClient = nullptr;
+constexpr int kMaxTargetConnectFailures = 3;
 
 bool hasMacAddress(const String &macAddress) {
   return macAddress.length() == 17;
+}
+
+bool isGalaxyDeviceName(const std::string &name) {
+  String normalized(name.c_str());
+  normalized.toLowerCase();
+  return normalized == "galaxy watch5 (5xxh)";
 }
 } // namespace
 
@@ -79,6 +89,9 @@ void BluetoothConnection::begin() {
 void BluetoothConnection::begin(const Config &config) {
   BLEDevice::init(config.deviceName);
   targetReconnectIntervalMs = config.targetReconnectIntervalMs;
+  nearbyScanEnabled = config.scanNearbyDevices;
+  scanIntervalMs = config.scanIntervalMs;
+  scanDurationSeconds = config.scanDurationSeconds;
 
   server = BLEDevice::createServer();
   server->setCallbacks(new ServerCallbacks(*this));
@@ -116,7 +129,16 @@ void BluetoothConnection::loop() {
     shouldRestartAdvertising = false;
   }
 
-  attemptTargetConnection();
+  if (!nearbyScanEnabled) {
+    attemptTargetConnection();
+  }
+
+  if (targetConnected && shouldDumpTargetGatt) {
+    shouldDumpTargetGatt = false;
+    dumpTargetGatt();
+  }
+
+  scanNearbyDevices();
 }
 
 bool BluetoothConnection::isConnected() const {
@@ -127,12 +149,26 @@ bool BluetoothConnection::isTargetConnected() const {
   return targetConnected;
 }
 
+String BluetoothConnection::getTargetDeviceName() const {
+  return targetDeviceName;
+}
+
+String BluetoothConnection::getTargetModelNumber() const {
+  return targetModelNumber;
+}
+
 void BluetoothConnection::connectToTarget(const char *macAddress) {
+  String previousAddress = targetMacAddress;
   targetMacAddress = macAddress == nullptr ? "" : macAddress;
   targetMacAddress.trim();
   targetConnectionEnabled = hasMacAddress(targetMacAddress);
   targetConnected = false;
   lastTargetConnectAttempt = 0;
+
+  if (targetMacAddress != previousAddress) {
+    targetConnectFailures = 0;
+    targetAutoConnectBlocked = false;
+  }
 
   if (!targetConnectionEnabled) {
     Serial.println("BLE target MAC is invalid; expected format AA:BB:CC:DD:EE:FF");
@@ -175,6 +211,8 @@ void BluetoothConnection::handleDisconnect() {
 
 void BluetoothConnection::handleTargetConnect() {
   targetConnected = true;
+  targetConnectFailures = 0;
+  shouldDumpTargetGatt = true;
   Serial.print("Connected to BLE target: ");
   Serial.println(targetMacAddress);
 }
@@ -220,6 +258,187 @@ void BluetoothConnection::attemptTargetConnection() {
   BLEAddress address(targetMacAddress.c_str());
   if (!targetClient->connect(address)) {
     targetConnected = false;
+    ++targetConnectFailures;
     Serial.println("BLE target connection failed; will retry");
   }
+}
+
+void BluetoothConnection::attemptTargetConnection(BLEAdvertisedDevice &device) {
+  if (targetConnected) {
+    return;
+  }
+
+  if (targetConnectFailures >= kMaxTargetConnectFailures) {
+    Serial.println("BLE target rejected connection too many times; keeping scan-only mode.");
+    targetConnectionEnabled = false;
+    targetAutoConnectBlocked = true;
+    return;
+  }
+
+  if (targetClient == nullptr) {
+    targetClient = BLEDevice::createClient();
+    targetClient->setClientCallbacks(new ClientCallbacks(*this));
+  }
+
+  if (targetClient->isConnected()) {
+    targetConnected = true;
+    return;
+  }
+
+  Serial.print("Connecting to BLE target: ");
+  Serial.println(targetMacAddress);
+
+  if (!targetClient->connect(&device)) {
+    targetConnected = false;
+    ++targetConnectFailures;
+    Serial.println("BLE target connection failed; will retry");
+  }
+}
+
+void BluetoothConnection::dumpTargetGatt() {
+  if (targetClient == nullptr || !targetClient->isConnected()) {
+    return;
+  }
+
+  readTargetDeviceInfo();
+
+  Serial.println();
+  Serial.println("Target watch GATT services:");
+
+  std::map<std::string, BLERemoteService *> *services = targetClient->getServices();
+  if (services == nullptr || services->empty()) {
+    Serial.println("  no services discovered");
+    return;
+  }
+
+  for (auto &serviceEntry : *services) {
+    BLERemoteService *service = serviceEntry.second;
+    if (service == nullptr) {
+      continue;
+    }
+
+    Serial.print("  Service ");
+    Serial.println(service->getUUID().toString().c_str());
+
+    std::map<std::string, BLERemoteCharacteristic *> *characteristics =
+        service->getCharacteristics();
+    if (characteristics == nullptr || characteristics->empty()) {
+      Serial.println("    no characteristics");
+      continue;
+    }
+
+    for (auto &characteristicEntry : *characteristics) {
+      BLERemoteCharacteristic *characteristic = characteristicEntry.second;
+      if (characteristic == nullptr) {
+        continue;
+      }
+
+      Serial.print("    Char ");
+      Serial.print(characteristic->getUUID().toString().c_str());
+      Serial.print(" props=");
+      if (characteristic->canRead()) Serial.print("R");
+      if (characteristic->canWrite()) Serial.print("W");
+      if (characteristic->canWriteNoResponse()) Serial.print("w");
+      if (characteristic->canNotify()) Serial.print("N");
+      if (characteristic->canIndicate()) Serial.print("I");
+      Serial.println();
+    }
+  }
+}
+
+void BluetoothConnection::readTargetDeviceInfo() {
+  targetDeviceName = "--";
+  targetModelNumber = "--";
+
+  BLERemoteService *genericAccess = targetClient->getService(BLEUUID((uint16_t)0x1800));
+  if (genericAccess != nullptr) {
+    BLERemoteCharacteristic *deviceName =
+        genericAccess->getCharacteristic(BLEUUID((uint16_t)0x2A00));
+    if (deviceName != nullptr && deviceName->canRead()) {
+      targetDeviceName = String(deviceName->readValue().c_str());
+    }
+  }
+
+  BLERemoteService *deviceInfo = targetClient->getService(BLEUUID((uint16_t)0x180A));
+  if (deviceInfo != nullptr) {
+    BLERemoteCharacteristic *modelNumber =
+        deviceInfo->getCharacteristic(BLEUUID((uint16_t)0x2A24));
+    if (modelNumber != nullptr && modelNumber->canRead()) {
+      targetModelNumber = String(modelNumber->readValue().c_str());
+    }
+  }
+
+  Serial.println();
+  Serial.println("Target watch info:");
+  Serial.print("  Device name: ");
+  Serial.println(targetDeviceName);
+  Serial.print("  Model number: ");
+  Serial.println(targetModelNumber);
+}
+
+void BluetoothConnection::scanNearbyDevices() {
+  if (!nearbyScanEnabled || targetConnected) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  if (lastScanStarted != 0 && now - lastScanStarted < scanIntervalMs) {
+    return;
+  }
+
+  lastScanStarted = now;
+
+  BLEScan *scan = BLEDevice::getScan();
+  scan->setActiveScan(true);
+  scan->setInterval(100);
+  scan->setWindow(99);
+
+  BLEScanResults results = scan->start(scanDurationSeconds, false);
+  const int count = results.getCount();
+  bool foundGalaxyDevice = false;
+
+  for (int i = 0; i < count; ++i) {
+    BLEAdvertisedDevice device = results.getDevice(i);
+    const std::string name = device.haveName() ? device.getName() : "";
+    if (!isGalaxyDeviceName(name)) {
+      continue;
+    }
+
+    if (!foundGalaxyDevice) {
+      Serial.println();
+      Serial.println("Target BLE watch:");
+      foundGalaxyDevice = true;
+    }
+
+    const std::string serviceUuid =
+        device.haveServiceUUID() ? device.getServiceUUID().toString() : "";
+
+    Serial.printf("  %s  RSSI=%d",
+                  device.getAddress().toString().c_str(),
+                  device.getRSSI());
+
+    Serial.printf("  name=\"%s\"", name.c_str());
+
+    if (!serviceUuid.empty()) {
+      Serial.printf("  service=%s", serviceUuid.c_str());
+    }
+
+    Serial.println();
+
+    String discoveredAddress(device.getAddress().toString().c_str());
+    discoveredAddress.toUpperCase();
+    if (targetAutoConnectBlocked && targetMacAddress == discoveredAddress) {
+      continue;
+    }
+
+    if (!targetConnectionEnabled || targetMacAddress != discoveredAddress) {
+      Serial.print("Found target watch; will connect to ");
+      Serial.println(discoveredAddress);
+      connectToTarget(discoveredAddress.c_str());
+    }
+
+    attemptTargetConnection(device);
+  }
+
+  scan->clearResults();
 }

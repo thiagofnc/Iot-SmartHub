@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IoT-SmartHub Presentation</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel-2: #21262d;
+      --text: #f0f6fc;
+      --muted: #9da7b3;
+      --line: #30363d;
+      --accent: #2f81f7;
+      --ok: #3fb950;
+      --warn: #d29922;
+      --hot: #f85149;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .deck {
+      scroll-snap-type: y mandatory;
+      overflow-y: auto;
+      height: 100vh;
+    }
+
+    .slide {
+      min-height: 100vh;
+      scroll-snap-align: start;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 56px 8vw;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      color: var(--accent);
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 14px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      font-size: clamp(48px, 8vw, 92px);
+      line-height: 0.96;
+      margin: 0 0 20px;
+    }
+
+    h2 {
+      font-size: clamp(34px, 5vw, 62px);
+      line-height: 1;
+      margin: 0 0 24px;
+    }
+
+    h3 {
+      margin: 0 0 10px;
+      font-size: 24px;
+    }
+
+    p {
+      color: var(--muted);
+      font-size: clamp(20px, 2.1vw, 28px);
+      line-height: 1.35;
+      max-width: 980px;
+      margin: 0 0 18px;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 24px;
+      color: var(--muted);
+      font-size: clamp(20px, 2vw, 27px);
+      line-height: 1.45;
+    }
+
+    li {
+      margin: 10px 0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 22px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      min-height: 170px;
+    }
+
+    .card p,
+    .note p {
+      font-size: 19px;
+      margin: 0;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 14px;
+      margin-bottom: 12px;
+      border: 1px solid var(--line);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      align-items: stretch;
+      margin-top: 26px;
+    }
+
+    .step {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      min-height: 130px;
+      position: relative;
+    }
+
+    .step strong {
+      display: block;
+      color: var(--text);
+      font-size: 22px;
+      margin-bottom: 8px;
+    }
+
+    .step span {
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.3;
+    }
+
+    .mock-ui {
+      margin-top: 22px;
+      width: min(760px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #05070b;
+      padding: 18px;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 16px;
+      margin-bottom: 18px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      display: inline-block;
+      border-radius: 50%;
+      background: var(--ok);
+      margin-right: 8px;
+    }
+
+    .time {
+      font-size: clamp(54px, 10vw, 106px);
+      font-weight: 800;
+      line-height: 0.95;
+      margin-bottom: 18px;
+    }
+
+    .tiles {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .tile {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 92px;
+    }
+
+    .tile b {
+      display: block;
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+
+    .tile span {
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .note {
+      margin-top: 24px;
+      background: rgba(210, 153, 34, 0.12);
+      border: 1px solid rgba(210, 153, 34, 0.45);
+      border-radius: 8px;
+      padding: 16px;
+      max-width: 980px;
+    }
+
+    .controls {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      background: rgba(13, 17, 23, 0.82);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    code {
+      color: var(--text);
+      background: var(--panel-2);
+      padding: 2px 6px;
+      border-radius: 5px;
+    }
+
+    @media (max-width: 850px) {
+      .slide {
+        padding: 42px 22px;
+        justify-content: flex-start;
+      }
+
+      .grid,
+      .grid.two,
+      .flow,
+      .tiles {
+        grid-template-columns: 1fr;
+      }
+
+      .controls {
+        display: none;
+      }
+    }
+
+    @media print {
+      .deck {
+        height: auto;
+        overflow: visible;
+      }
+
+      .slide {
+        min-height: 100vh;
+        page-break-after: always;
+      }
+
+      .controls {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <section class="slide">
+      <div class="eyebrow">IoT Project Presentation</div>
+      <h1>IoT-SmartHub</h1>
+      <p>
+        A connected ESP32-based smart hub that combines camera capture, wireless
+        communication, BLE device interaction, Wi-Fi web services, servo control,
+        and an interactive display UI.
+      </p>
+    </section>
+
+    <section class="slide">
+      <div class="eyebrow">Project Goal</div>
+      <h2>One Hub, Multiple Interfaces</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="tag">Camera</span>
+          <h3>Vision Input</h3>
+          <p>Captures JPEG frames, streams video, and records gesture datasets to SD card.</p>
+        </div>
+        <div class="card">
+          <span class="tag">Connectivity</span>
+          <h3>BLE, Wi-Fi, LoRa</h3>
+          <p>Uses short-range BLE, local Wi-Fi services, and a LoRa path for long-range low-data messages.</p>
+        </div>
+        <div class="card">
+          <span class="tag">Output</span>
+          <h3>Display + Servo</h3>
+          <p>Shows live status on the dashboard and can physically actuate a servo motor.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="eyebrow">System Architecture</div>
+      <h2>High-Level Data Flow</h2>
+      <div class="flow">
+        <div class="step"><strong>Sensors</strong><span>Camera, BLE watch, phone data, optional LoRa node.</span></div>
+        <div class="step"><strong>ESP32 Hub</strong><span>Runs firmware, routes data, and decides actions.</span></div>
+        <div class="step"><strong>Network</strong><span>Wi-Fi HTTP endpoints and external APIs.</span></div>
+        <div class="step"><strong>UI</strong><span>LVGL dashboard or small OLED status display.</span></div>
+        <div class="step"><strong>Actuator</strong><span>Servo motor moves based on command or event.</span></div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="eyebrow">Camera Module</div>
+      <h2>Camera Capture and Dataset Recording</h2>
+      <ul>
+        <li>Target board: Seeed Studio XIAO ESP32S3 Sense.</li>
+        <li>Camera firmware exposes <code>/capture</code> for a still JPEG and <code>/stream</code> for MJPEG preview.</li>
+        <li>Dataset capture records labeled gesture clips such as up, down, left swipe, right swipe, rotate, and idle.</li>
+        <li>Frames are saved to the microSD card and can be downloaded as <code>dataset.zip</code>.</li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <div class="eyebrow">Wi-Fi Connection</div>
+      <h2>Local Web Services and API Access</h2>
+      <ul>
+        <li>ESP32 connects as a Wi-Fi station and prints its IP address over serial.</li>
+        <li>SmartHub firmware includes an HTTP server with a sample battery endpoint: <code>/battery?phone=85</code>.</li>
+        <li>Screen firmware uses Wi-Fi for OpenWeather data, NTP time sync, and Spotify Web API controls.</li>
+        <li>Wi-Fi status is shown on the display as connected, connecting, or offline.</li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <div class="eyebrow">BLE Connection</div>
+      <h2>Bluetooth Low Energy Device Link</h2>
+      <ul>
+        <li>The hub advertises a BLE UART-style service for receiving and sending messages.</li>
+        <li>It scans nearby BLE devices and looks for a target watch device.</li>
+        <li>After connection, it can read GATT device information such as device name and model number.</li>
+        <li>The OLED status screen shows whether the watch is scanning or connected.</li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <div class="eyebrow">LoRa Connection</div>
+      <h2>Long-Range Low-Power Messaging</h2>
+      <ul>
+        <li>LoRa is useful when Wi-Fi is unavailable or the sensor node is far from the hub.</li>
+        <li>Example payloads: motion event, battery level, door state, temperature, or emergency alert.</li>
+        <li>The hub can receive LoRa packets and forward the status to the display or Wi-Fi dashboard.</li>
+        <li>Typical ESP32 libraries include RadioLib or LoRa by Sandeep Mistry, depending on the LoRa module.</li>
+      </ul>
+      <div class="note">
+        <p><strong>Implementation note:</strong> I did not find LoRa code in the current repo, so this slide describes the planned/optional LoRa connection path.</p>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="eyebrow">Servo Motor</div>
+      <h2>Physical Control Output</h2>
+      <ul>
+        <li>A servo motor can represent a smart lock, camera pan/tilt, vent flap, pointer, or small robotic action.</li>
+        <li>The ESP32 drives the servo using PWM, usually with a 50 Hz signal.</li>
+        <li>Example actions: open at 90 degrees, close at 0 degrees, or move based on BLE/Wi-Fi/LoRa command.</li>
+        <li>For reliable motion, power the servo from a suitable external 5 V supply and share ground with the ESP32.</li>
+      </ul>
+      <div class="note">
+        <p><strong>Implementation note:</strong> I did not find servo code in the current repo, so this is an example feature slide you can build into the firmware.</p>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="eyebrow">Display UI</div>
+      <h2>SmartHub Dashboard</h2>
+      <p>The screen firmware uses LVGL on the CrowPanel display to provide multiple dashboard pages.</p>
+      <div class="mock-ui">
+        <div class="status">
+          <span><span class="dot"></span>Wi-Fi Connected</span>
+          <span>Weather | Battery | Music</span>
+        </div>
+        <div class="time">10:42 AM</div>
+        <div class="tiles">
+          <div class="tile"><b>72&deg;</b><span>Weather status</span></div>
+          <div class="tile"><b>85%</b><span>Phone battery</span></div>
+          <div class="tile"><b>Playing</b><span>Spotify control</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="eyebrow">Example Demo Script</div>
+      <h2>How to Present the Project</h2>
+      <ul>
+        <li>Power on the SmartHub and show the display booting into the clock/dashboard UI.</li>
+        <li>Connect Wi-Fi and open the camera page from the serial monitor IP address.</li>
+        <li>Show <code>/stream</code> for live preview and <code>/capture</code> for a still image.</li>
+        <li>Connect or scan for the BLE watch and show the device name/model on the OLED.</li>
+        <li>Trigger a servo action from a command, such as unlock, rotate, open, or close.</li>
+        <li>Describe LoRa as the long-range sensor link for remote events.</li>
+      </ul>
+    </section>
+
+    <section class="slide">
+      <div class="eyebrow">Example Slide Speech</div>
+      <h2>Short Explanation</h2>
+      <p>
+        "Our IoT-SmartHub is an ESP32-based hub that brings together several
+        common IoT interfaces. The camera module captures image data and can
+        stream or record gesture datasets. Wi-Fi provides local web endpoints
+        and cloud API access. BLE connects to nearby devices such as a smart
+        watch. LoRa can be added for long-range low-power sensor messages, and
+        a servo motor gives the system a physical output. The display UI brings
+        everything together so the user can quickly see the hub status."
+      </p>
+    </section>
+
+    <section class="slide">
+      <div class="eyebrow">Conclusion</div>
+      <h2>What the SmartHub Shows</h2>
+      <ul>
+        <li>Multiple IoT communication methods in one project.</li>
+        <li>Real sensor input through camera capture and BLE scanning.</li>
+        <li>Useful network services through Wi-Fi endpoints and APIs.</li>
+        <li>Human-friendly feedback through the display UI.</li>
+        <li>Physical interaction through servo motor control.</li>
+      </ul>
+    </section>
+  </main>
+
+  <div class="controls">Scroll slides or press Page Up / Page Down. Print to PDF for submission.</div>
+</body>
+</html>
