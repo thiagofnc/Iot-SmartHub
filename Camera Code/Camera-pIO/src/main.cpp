@@ -26,7 +26,7 @@ constexpr int kIdleIndex = 5;
 // Local override of the FOMO detection threshold. Don't edit
 // EI_CLASSIFIER_OBJECT_DETECTION_THRESHOLD in model_metadata.h — that file is
 // regenerated on every Edge Impulse model export.
-constexpr float kHandConfThreshold = 0.75f;
+constexpr float kHandConfThreshold = 0.45f;
 
 bool g_sdReady = false;
 
