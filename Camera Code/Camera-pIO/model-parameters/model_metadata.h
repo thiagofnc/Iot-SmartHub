@@ -85,9 +85,9 @@
 #define EI_CLASSIFIER_DATATYPE_INT8              9
 
 #define EI_CLASSIFIER_PROJECT_ID                 979813
-#define EI_CLASSIFIER_PROJECT_OWNER              "GiottoSacha720"
+#define EI_CLASSIFIER_PROJECT_OWNER              "GiottoSacha"
 #define EI_CLASSIFIER_PROJECT_NAME               "IoT project"
-#define EI_CLASSIFIER_PROJECT_DEPLOY_VERSION     6
+#define EI_CLASSIFIER_PROJECT_DEPLOY_VERSION     9
 #define EI_CLASSIFIER_NN_INPUT_FRAME_SIZE        27648
 #define EI_CLASSIFIER_RAW_SAMPLE_COUNT           9216
 #define EI_CLASSIFIER_RAW_SAMPLES_PER_FRAME      1
@@ -113,7 +113,7 @@
 #warning 'EI_CLASSFIER_OBJECT_DETECTION_COUNT' is used for the guaranteed minimum number of objects detected. To get all objects during inference use 'bounding_boxes_count' from the 'ei_impulse_result_t' struct instead.
 #endif // SILENCE_EI_CLASSFIER_OBJECT_DETECTION_COUNT_WARNING
 #define EI_CLASSIFIER_OBJECT_DETECTION_COUNT       10
-#define EI_CLASSIFIER_OBJECT_DETECTION_THRESHOLD   0.5
+#define EI_CLASSIFIER_OBJECT_DETECTION_THRESHOLD   0.7
 
 #define EI_CLASSIFIER_HAS_FFT_INFO               1
 #define EI_CLASSIFIER_LOAD_FFT_32                0
@@ -175,7 +175,7 @@
 
 #define EI_STUDIO_VERSION_MAJOR             1
 #define EI_STUDIO_VERSION_MINOR             92
-#define EI_STUDIO_VERSION_PATCH             20
+#define EI_STUDIO_VERSION_PATCH             22
 
 #if ((EI_CLASSIFIER_INFERENCING_ENGINE == EI_CLASSIFIER_TFLITE) ||      (EI_CLASSIFIER_INFERENCING_ENGINE == EI_CLASSIFIER_DRPAI)) &&      EI_CLASSIFIER_USE_FULL_TFLITE == 1
 

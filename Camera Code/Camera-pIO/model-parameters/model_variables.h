@@ -112,7 +112,7 @@ const ei_learning_block_t ei_learning_blocks_979813_1[ei_learning_blocks_979813_
 };
 
 ei_fill_result_fomo_i8_config_t ei_fill_result_fomo_i8_config_979813_3 = {
-    .threshold = 0.5,
+    .threshold = 0.7,
     .out_width = 12,
     .out_height = 12,
     .object_detection_count = 10,
@@ -140,11 +140,11 @@ uint32_t *freeform_outputs_979813_1 = nullptr;
 
 const ei_impulse_t impulse_979813_1 = {
     .project_id = 979813,
-    .project_owner = "GiottoSacha720",
+    .project_owner = "GiottoSacha",
     .project_name = "IoT project",
     .impulse_id = 1,
     .impulse_name = "Impulse #1",
-    .deploy_version = 6,
+    .deploy_version = 9,
 
     .nn_input_frame_size = 27648,
     .raw_sample_count = 9216,
