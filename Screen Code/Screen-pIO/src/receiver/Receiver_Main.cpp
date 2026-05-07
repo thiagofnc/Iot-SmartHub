@@ -4,6 +4,7 @@ Receiver_Main::Receiver_Main() {
     motorEnabled = false;
     motorStep = 0;
     lastMotorMove = 0;
+    currentRotation = -1;
 }
 
 void Receiver_Main::init() {
@@ -19,6 +20,12 @@ void Receiver_Main::init() {
 }
 
 void Receiver_Main::loop() {
+    if (Lora_Receiver::newDataReceived) {
+        webServer.remoteTemp = Lora_Receiver::lastTemp;
+        webServer.remoteHum = Lora_Receiver::lastHum;
+        Lora_Receiver::newDataReceived = false;
+    }
+
     // Check for serial commands
     if (Serial.available()) {
         String cmd = Serial.readStringUntil('\n');
@@ -37,6 +44,13 @@ void Receiver_Main::loop() {
     //camReceiver.processGesture();
     webServer.getRequest();
     //lightSensor.readLight();
+    
+    // Apply WebServer rotation to motor
+    if (webServer.requestedRotation != currentRotation) {
+        currentRotation = webServer.requestedRotation;
+        motor.rotate(currentRotation);
+        Serial.printf("Receiver_Main applied rotation: %d\n", currentRotation);
+    }
     
     // Motor test sequence (similar to manufacturer example, but non-blocking)
     if (motorEnabled) {

@@ -2,7 +2,7 @@
 #include "webPages.h"
 
 // API Key referenced from OpenWeatherMapTemplate project
-const String apiKey = "c5fead7c5ab0dd71bd4324d8bb59a31a";
+const String apiKey = "29f5821965081acda326d928f69ea78d";
 const String latitud = "39.4835";
 const String longitud = "-87.3237";
 const String units = "imperial"; // Using imperial since Rose-Hulman is in the US
@@ -15,6 +15,8 @@ WebServerManager::WebServerManager() : server(80) {
     currentTemp = 0;
     currentHum = 0;
     currentDesc = "Loading...";
+    remoteTemp = 0;
+    remoteHum = 0;
     lastWeatherUpdate = 0;
 }
 
@@ -79,7 +81,7 @@ void WebServerManager::updateOpenWeatherMap() {
             Serial.println("Failed to parse JSON.");
         }
     } else {
-        Serial.println("HTTP Error while requesting OpenWeatherMap.");
+        Serial.printf("HTTP Error while requesting OpenWeatherMap. Code: %d, Error: %s\n", httpCode, http.errorToString(httpCode).c_str());
     }
     http.end();
 }
@@ -107,6 +109,8 @@ void WebServerManager::handleRotation() {
 void WebServerManager::handleWeather() {
     String json = "{\"temp\": " + String(currentTemp, 1) + 
                   ", \"humidity\": " + String(currentHum, 1) + 
-                  ", \"description\": \"" + currentDesc + "\"}";
+                  ", \"description\": \"" + currentDesc + "\"" +
+                  ", \"remoteTemp\": " + String(remoteTemp, 1) +
+                  ", \"remoteHum\": " + String(remoteHum, 1) + "}";
     server.send(200, "application/json", json);
 }

@@ -13,6 +13,11 @@ public:
     Lora_Receiver();
     void init();
     void receivePacket();
+    
+    // Expose latest parsed data
+    static double lastTemp;
+    static double lastHum;
+    static bool newDataReceived;
 };
 
 #endif // LORA_RECEIVER_H

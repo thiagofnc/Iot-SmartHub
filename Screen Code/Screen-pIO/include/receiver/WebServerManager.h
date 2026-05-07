@@ -17,6 +17,7 @@ private:
     double currentTemp;
     double currentHum;
     String currentDesc;
+
     unsigned long lastWeatherUpdate;
     const unsigned long WEATHER_UPDATE_INTERVAL = 10 * 60 * 1000;
     
@@ -25,6 +26,10 @@ private:
 public:
     int requestedBrightness;
     int requestedRotation;
+    
+    // Remote Sensor Data (accessible by receiver logic to update)
+    double remoteTemp;
+    double remoteHum;
 
     WebServerManager();
     void init();

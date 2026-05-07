@@ -91,6 +91,12 @@ const char indexHtml[] PROGMEM = R"=====(
             justify-content: space-between; 
             align-items: center; 
             margin-top: 15px; 
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 15px;
+        }
+        .weather-info:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
         }
         .weather-value { 
             font-size: 32px; 
@@ -108,7 +114,8 @@ const char indexHtml[] PROGMEM = R"=====(
         <h1>SmartHub Control</h1>
         
         <div class="card">
-            <h2>Weather</h2>
+            <h2>Environment Data</h2>
+            <div style="font-size: 14px; color: #b0c4de; margin-bottom: 5px;">Outdoor (OpenWeatherMap)</div>
             <div class="weather-info">
                 <div>
                     <div class="weather-value" id="temp">--&deg;F</div>
@@ -116,6 +123,17 @@ const char indexHtml[] PROGMEM = R"=====(
                 </div>
                 <div style="text-align: right;">
                     <div class="weather-value" id="hum">--%</div>
+                    <div class="weather-desc">Humidity</div>
+                </div>
+            </div>
+            <div style="font-size: 14px; color: #b0c4de; margin-top: 15px; margin-bottom: 5px;">Indoor (LoRa Sensor)</div>
+            <div class="weather-info">
+                <div>
+                    <div class="weather-value" id="remoteTemp">--&deg;F</div>
+                    <div class="weather-desc">Temperature</div>
+                </div>
+                <div style="text-align: right;">
+                    <div class="weather-value" id="remoteHum">--%</div>
                     <div class="weather-desc">Humidity</div>
                 </div>
             </div>
@@ -158,6 +176,8 @@ const char indexHtml[] PROGMEM = R"=====(
                     document.getElementById('temp').innerHTML = data.temp + '&deg;F';
                     document.getElementById('hum').innerHTML = data.humidity + '%';
                     document.getElementById('desc').innerText = data.description;
+                    document.getElementById('remoteTemp').innerHTML = data.remoteTemp + '&deg;F';
+                    document.getElementById('remoteHum').innerHTML = data.remoteHum + '%';
                 })
                 .catch(err => console.error(err));
         }

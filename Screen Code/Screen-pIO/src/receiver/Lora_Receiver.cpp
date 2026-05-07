@@ -18,6 +18,10 @@ static bool lora_idle = true;
 static uint32_t license_1[4] = { 0xE45FC246,0x44C995C9,0x3FA18B6F,0xF066DCAF };
 static RadioEvents_t RadioEvents;
 
+double Lora_Receiver::lastTemp = 0.0;
+double Lora_Receiver::lastHum = 0.0;
+bool Lora_Receiver::newDataReceived = false;
+
 void Lora_Receiver::OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr) {
     memcpy(rxpacket, payload, size );
     rxpacket[size]='\0';
@@ -29,6 +33,16 @@ void Lora_Receiver::OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8
     Serial.print(rssi);
     Serial.print(" | SNR: ");
     Serial.println(snr);
+    
+    // Basic parsing assuming format "T:xx.x H:xx.x" or similar
+    String packetStr = String(rxpacket);
+    int tIndex = packetStr.indexOf("T:");
+    int hIndex = packetStr.indexOf("H:");
+    if (tIndex >= 0 && hIndex >= 0) {
+        lastTemp = packetStr.substring(tIndex + 2, packetStr.indexOf(' ', tIndex)).toDouble();
+        lastHum = packetStr.substring(hIndex + 2).toDouble();
+        newDataReceived = true;
+    }
         
     lora_idle = true; // Always resume receiving
 }

@@ -19,6 +19,7 @@ private:
     bool motorEnabled;
     unsigned long lastMotorMove;
     int motorStep;
+    int currentRotation;
 
 public:
     Receiver_Main();
