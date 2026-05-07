@@ -47,6 +47,82 @@ SAVE_DIR = Path(__file__).resolve().parent.parent / "hard_negative_mining"
 RECORD_DIR = Path(__file__).resolve().parent.parent / "recordings"
 
 
+class GestureRecognizer:
+    # Detects 4-direction swipes (UP/DOWN/LEFT/RIGHT) from a stream of hand
+    # centroid samples. All thresholds are tuned for the 96x96 input frame.
+    MIN_DISPLACEMENT = 0.30 * WIDTH      # ~29 px on the dominant axis
+    MAX_OFF_AXIS_RATIO = 0.6             # |off_axis| < 0.6 * |dominant|
+    MIN_DURATION = 0.10                  # seconds; fast guard against single-frame jumps
+    MAX_DURATION = 0.80                  # seconds; window we look back over
+    COOLDOWN = 0.60                      # seconds between accepted gestures
+    LOST_HAND_RESET = 0.25               # seconds without hand -> drop buffer
+    MIN_MONOTONIC_FRAC = 0.70            # fraction of steps that must move forward on the dominant axis
+    MIN_SAMPLES = 3
+
+    def __init__(self):
+        self._samples: list[tuple[float, float, float]] = []  # (t, x, y) in 96-space
+        self._cooldown_until = 0.0
+        self._last_hand_t = -1.0
+
+    def update(self, t: float, has_hand: bool, cx: float, cy: float):
+        # Drop the buffer if we lost the hand for too long — otherwise a hand
+        # that re-enters far away would chain into a phantom swipe.
+        if not has_hand:
+            if self._last_hand_t < 0 or (t - self._last_hand_t) > self.LOST_HAND_RESET:
+                self._samples.clear()
+            return None
+
+        self._last_hand_t = t
+        self._samples.append((t, cx, cy))
+
+        cutoff = t - self.MAX_DURATION
+        while self._samples and self._samples[0][0] < cutoff:
+            self._samples.pop(0)
+
+        if t < self._cooldown_until:
+            return None
+        if len(self._samples) < self.MIN_SAMPLES:
+            return None
+
+        t0, x0, y0 = self._samples[0]
+        t1, x1, y1 = self._samples[-1]
+        dt = t1 - t0
+        if dt < self.MIN_DURATION:
+            return None
+
+        dx = x1 - x0
+        dy = y1 - y0
+        adx, ady = abs(dx), abs(dy)
+
+        gesture = None
+        if adx >= self.MIN_DISPLACEMENT and ady < adx * self.MAX_OFF_AXIS_RATIO:
+            sign = 1 if dx > 0 else -1
+            if self._monotonic(axis_idx=1, sign=sign):
+                gesture = "RIGHT" if dx > 0 else "LEFT"
+        elif ady >= self.MIN_DISPLACEMENT and adx < ady * self.MAX_OFF_AXIS_RATIO:
+            # Image y grows downward, so dy > 0 is a downward swipe.
+            sign = 1 if dy > 0 else -1
+            if self._monotonic(axis_idx=2, sign=sign):
+                gesture = "DOWN" if dy > 0 else "UP"
+
+        if gesture is not None:
+            self._samples.clear()
+            self._cooldown_until = t + self.COOLDOWN
+        return gesture
+
+    def _monotonic(self, axis_idx: int, sign: int) -> bool:
+        forward = 0
+        total = 0
+        prev = self._samples[0][axis_idx]
+        for s in self._samples[1:]:
+            v = s[axis_idx]
+            if (v - prev) * sign > 0:
+                forward += 1
+            total += 1
+            prev = v
+        return total > 0 and (forward / total) >= self.MIN_MONOTONIC_FRAC
+
+
 def rgb565_to_bgr(buf: bytes) -> np.ndarray:
     # Try big-endian first: ESP32 camera framebuffers come out byte-swapped
     # relative to a normal LE uint16, so the 16-bit pixel is (buf[2i]<<8)|buf[2i+1].
@@ -122,6 +198,19 @@ def draw_centroid(img: np.ndarray, cx: float, cy: float) -> None:
     cv2.circle(img, (px, py), 6, color, -1)
 
 
+def draw_gesture_label(img: np.ndarray, text: str) -> None:
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 2.0
+    thickness = 4
+    (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
+    h, w = img.shape[:2]
+    x = (w - tw) // 2
+    y = h - 30
+    # Black halo + white fill so the label stays readable over any frame.
+    cv2.putText(img, text, (x, y), font, scale, (0, 0, 0), thickness + 4, cv2.LINE_AA)
+    cv2.putText(img, text, (x, y), font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(f"Usage: {sys.argv[0]} <serial_port>", file=sys.stderr)
@@ -153,6 +242,11 @@ def main() -> int:
     record_session_ts = ""  # set when recording starts; used as filename prefix
     record_frame_idx = 0    # frames saved in the current recording session
 
+    recognizer = GestureRecognizer()
+    GESTURE_DISPLAY_SECONDS = 1.2
+    gesture_text = ""
+    gesture_until = 0.0
+
     while True:
         frame = read_frame(ser)
 
@@ -172,6 +266,13 @@ def main() -> int:
                 cv2.imwrite(str(path), last_gray)
                 record_frame_idx += 1
 
+            now = time.monotonic()
+            gesture = recognizer.update(now, has_hand, cx, cy)
+            if gesture is not None:
+                gesture_text = gesture
+                gesture_until = now + GESTURE_DISPLAY_SECONDS
+                print(f"[GESTURE] {gesture}")
+
             big = cv2.resize(
                 bgr,
                 (WIDTH * DISPLAY_SCALE, HEIGHT * DISPLAY_SCALE),
@@ -179,6 +280,8 @@ def main() -> int:
             )
             if has_hand:
                 draw_centroid(big, cx, cy)
+            if gesture_text and now < gesture_until:
+                draw_gesture_label(big, gesture_text)
             cv2.imshow(window, big)
 
         key = cv2.waitKey(1) & 0xFF
