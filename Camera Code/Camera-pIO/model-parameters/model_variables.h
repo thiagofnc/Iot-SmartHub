@@ -112,7 +112,7 @@ const ei_learning_block_t ei_learning_blocks_979813_1[ei_learning_blocks_979813_
 };
 
 ei_fill_result_fomo_i8_config_t ei_fill_result_fomo_i8_config_979813_3 = {
-    .threshold = 0.7,
+    .threshold = 0.4,
     .out_width = 12,
     .out_height = 12,
     .object_detection_count = 10,
@@ -144,7 +144,7 @@ const ei_impulse_t impulse_979813_1 = {
     .project_name = "IoT project",
     .impulse_id = 1,
     .impulse_name = "Impulse #1",
-    .deploy_version = 9,
+    .deploy_version = 10,
 
     .nn_input_frame_size = 27648,
     .raw_sample_count = 9216,
