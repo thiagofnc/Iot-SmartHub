@@ -14,8 +14,6 @@
 static char rxpacket[BUFFER_SIZE];
 static bool lora_idle = true;
 
-// Heltec License Key from your example
-static uint32_t license_1[4] = { 0xE45FC246,0x44C995C9,0x3FA18B6F,0xF066DCAF };
 static RadioEvents_t RadioEvents;
 
 double Lora_Receiver::lastTemp = 0.0;
@@ -56,7 +54,6 @@ void Lora_Receiver::init() {
     Serial.println("Lora_Receiver initialized");
     
     // Heltec Initialization
-    Mcu.setlicense((unsigned long*)license_1, (unsigned char)HELTEC_BOARD);
     Mcu.begin(HELTEC_BOARD, SLOW_CLK_TPYE);
 
     RadioEvents.RxDone = OnRxDone;
