@@ -15,8 +15,8 @@ void Receiver_Main::init() {
     lora.init();
     motor.init();
     webServer.init();
-    //camReceiver.init();
-    //lightSensor.init();
+    camReceiver.init();
+    lightSensor.init();
 }
 
 void Receiver_Main::loop() {
@@ -40,10 +40,10 @@ void Receiver_Main::loop() {
     }
 
     // Poll data and handle core logic
-    //lora.receivePacket();
-    //camReceiver.processGesture();
+    lora.receivePacket();
+    camReceiver.processGesture();
     webServer.getRequest();
-    //lightSensor.readLight();
+    lightSensor.readLight();
     
     // Apply WebServer rotation to motor
     if (webServer.requestedRotation != currentRotation) {
