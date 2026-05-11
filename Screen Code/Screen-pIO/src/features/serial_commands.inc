@@ -25,12 +25,16 @@ void handleSerialCommands() {
       if (cmd == "port") { showScreen(ScreenIndex::Portrait); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "battery" || cmd == "b") { showScreen(ScreenIndex::Battery); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "battery-port" || cmd == "bport" || cmd == "bp") { showScreen(ScreenIndex::BatteryPortrait); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "nearby" || cmd == "n") { showScreen(ScreenIndex::NearbyDevices); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "nearby-port" || cmd == "nport" || cmd == "np") { showScreen(ScreenIndex::NearbyDevicesPortrait); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "music" || cmd == "m") { showScreen(ScreenIndex::Music); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "rotate") {
         if (currentScreen == ScreenIndex::Clock) showScreen(ScreenIndex::Portrait);
         else if (currentScreen == ScreenIndex::Portrait) showScreen(ScreenIndex::Clock);
         else if (currentScreen == ScreenIndex::Battery) showScreen(ScreenIndex::BatteryPortrait);
         else if (currentScreen == ScreenIndex::BatteryPortrait) showScreen(ScreenIndex::Battery);
+        else if (currentScreen == ScreenIndex::NearbyDevices) showScreen(ScreenIndex::NearbyDevicesPortrait);
+        else if (currentScreen == ScreenIndex::NearbyDevicesPortrait) showScreen(ScreenIndex::NearbyDevices);
         else if (currentScreen == ScreenIndex::Music) showScreen(ScreenIndex::MusicPortrait);
         else if (currentScreen == ScreenIndex::MusicPortrait) showScreen(ScreenIndex::Music);
         Serial.println(screenName(currentScreen));
@@ -38,17 +42,23 @@ void handleSerialCommands() {
       }
       if (cmd == "toggle" || cmd == "t") { toggleScreen(); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "up" || cmd == "^") {
-        // "up" is the gesture that lifts you from the Clock dashboard into the
-        // music player. From anywhere else it's a no-op today.
-        if (currentScreen == ScreenIndex::Clock) {
+        // On the Nearby screens, up/down scroll the device list. Elsewhere
+        // "up" lifts you from the Clock dashboard into the music player.
+        if (nearbyScrollBy(-1)) {
+          Serial.println("scroll up");
+        } else if (currentScreen == ScreenIndex::Clock) {
           showScreen(ScreenIndex::Music);
+          Serial.println(screenName(currentScreen));
+        } else {
+          Serial.println(screenName(currentScreen));
         }
-        Serial.println(screenName(currentScreen));
         return;
       }
       if (cmd == "down" || cmd == "v") {
-        // On Music, "down" is the play/pause toggle. Elsewhere it returns to Clock.
-        if (isMusicScreen(currentScreen)) {
+        // On Nearby, scroll. On Music, play/pause. Elsewhere, return to Clock.
+        if (nearbyScrollBy(+1)) {
+          Serial.println("scroll down");
+        } else if (isMusicScreen(currentScreen)) {
           musicTogglePlay();
           Serial.println(musicCurrentlyPlaying() ? "play" : "pause");
         } else {
@@ -120,7 +130,7 @@ void handleSerialCommands() {
         Serial.println("use d<0-255>"); return;
       }
       if (cmd == "help" || cmd == "?") {
-        Serial.println("commands: clock|c, weather|w, port, battery|b, battery-port|bp, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, dev<number> <0-100>, d<0-255>, show <name>, hide, help|?");
+        Serial.println("commands: clock|c, weather|w, port, battery|b, battery-port|bp, nearby|n, nearby-port|np, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, dev<number> <0-100>, d<0-255>, show <name>, hide, help|?");
         return;
       }
       Serial.printf("unknown: %s\n", cmd.c_str());

@@ -91,10 +91,12 @@ enum class ScreenIndex : int {
   Weather = 1,
   Portrait = 2,
   Battery = 3,
-  BatteryPortrait = 4,
-  Music = 5,    // Reached via "up" from Clock; not part of the swipe carousel.
-  MusicPortrait = 6,
-  Count = 4,    // Count of screens that participate in swipe rotation.
+  NearbyDevices = 4,
+  BatteryPortrait = 5,
+  NearbyDevicesPortrait = 6,
+  Music = 7,    // Reached via "up" from Clock; not part of the swipe carousel.
+  MusicPortrait = 8,
+  Count = 5,    // Count of screens that participate in swipe rotation.
 };
 
 CrowPanelDisplay display(DISPLAY_MODEL);
@@ -204,6 +206,7 @@ lv_color_t portraitIconBuf[56 * 56];
 #include "features/portrait_screen.inc"
 #include "features/battery_screen.inc"
 #include "features/music_player.inc"
+#include "features/nearby_screen.inc"
 
 // Screen switching
 // ---------------------------------------------------------------------------
@@ -226,7 +229,9 @@ lv_obj_t *rootForScreen(ScreenIndex s) {
     case ScreenIndex::Weather: return weatherUi.root;
     case ScreenIndex::Portrait: return portraitUi.root;
     case ScreenIndex::Battery: return batteryUi.root;
+    case ScreenIndex::NearbyDevices: return nearbyUi.root;
     case ScreenIndex::BatteryPortrait: return batteryPortraitUi.root;
+    case ScreenIndex::NearbyDevicesPortrait: return nearbyPortraitUi.root;
     case ScreenIndex::Music: return musicUi.root;
     case ScreenIndex::MusicPortrait: return musicPortraitUi.root;
     default: return clockUi.root;
@@ -239,7 +244,9 @@ const char *screenName(ScreenIndex s) {
     case ScreenIndex::Weather: return "weather";
     case ScreenIndex::Portrait: return "port";
     case ScreenIndex::Battery: return "battery";
+    case ScreenIndex::NearbyDevices: return "nearby";
     case ScreenIndex::BatteryPortrait: return "battery-port";
+    case ScreenIndex::NearbyDevicesPortrait: return "nearby-port";
     case ScreenIndex::Music: return "music";
     case ScreenIndex::MusicPortrait: return "music-portrait";
     default: return "clock";
@@ -248,6 +255,7 @@ const char *screenName(ScreenIndex s) {
 
 bool isPortraitScreen(ScreenIndex s) {
   return s == ScreenIndex::Portrait || s == ScreenIndex::BatteryPortrait ||
+         s == ScreenIndex::NearbyDevicesPortrait ||
          s == ScreenIndex::MusicPortrait;
 }
 
@@ -292,6 +300,7 @@ void showScreen(ScreenIndex s, int direction = 0) {
   // toggles, other than the one we're animating right now.
   lv_obj_t *roots[] = {clockUi.root, weatherUi.root, portraitUi.root,
                        batteryUi.root, batteryPortraitUi.root,
+                       nearbyUi.root, nearbyPortraitUi.root,
                        musicUi.root, musicPortraitUi.root};
   for (lv_obj_t *other : roots) {
     if (other && other != incoming && other != outgoing) {
@@ -300,14 +309,6 @@ void showScreen(ScreenIndex s, int direction = 0) {
     }
   }
 
-  refreshPageDots();
-  // Hide the carousel pill on Music (it's not part of the swipe rotation).
-  lv_obj_t *pillParent = lv_obj_get_parent(pageDotClock);
-  if (pillParent) {
-    if (isMusicScreen(s)) lv_obj_add_flag(pillParent, LV_OBJ_FLAG_HIDDEN);
-    else                          lv_obj_clear_flag(pillParent, LV_OBJ_FLAG_HIDDEN);
-  }
-  lv_obj_move_foreground(pillParent);
   lv_obj_invalidate(lv_scr_act());
   lastAutoRotate = millis();
 }
@@ -409,6 +410,8 @@ void updateWifiStatusIndicator(WifiIndicatorState wifi) {
   setStatusRowWifiState(portraitUi.status, wifi);
   setStatusRowWifiState(batteryUi.status, wifi);
   setStatusRowWifiState(batteryPortraitUi.status, wifi);
+  setStatusRowWifiState(nearbyUi.status, wifi);
+  setStatusRowWifiState(nearbyPortraitUi.status, wifi);
   setStatusRowWifiState(musicUi.status, wifi);
   setStatusRowWifiState(musicPortraitUi.status, wifi);
 
@@ -418,6 +421,8 @@ void updateWifiStatusIndicator(WifiIndicatorState wifi) {
   if (portraitUi.status.connected) lv_label_set_text(portraitUi.status.connected, label);
   if (batteryUi.status.connected) lv_label_set_text(batteryUi.status.connected, label);
   if (batteryPortraitUi.status.connected) lv_label_set_text(batteryPortraitUi.status.connected, label);
+  if (nearbyUi.status.connected) lv_label_set_text(nearbyUi.status.connected, label);
+  if (nearbyPortraitUi.status.connected) lv_label_set_text(nearbyPortraitUi.status.connected, label);
 }
 
 void updateGlanceTile() {
@@ -852,11 +857,11 @@ void setup() {
   buildPortraitClockScreen(scr);
   buildBatteryScreen(scr);
   buildBatteryPortraitScreen(scr);
+  buildNearbyScreen(scr);
+  buildNearbyPortraitScreen(scr);
   buildMusicScreen(scr);
   buildMusicPortraitScreen(scr);
-  buildPageDots(scr);
   showScreen(ScreenIndex::Clock, 0);
-  refreshPageDots();
   updateWifiStatusIndicator(WifiIndicatorState::Connecting);
   lastRenderedWifiStatus = static_cast<int>(WifiIndicatorState::Connecting);
   showStartupIconPreview(scr);
@@ -878,7 +883,7 @@ void setup() {
   updatePortraitClockUi();
   updateBatteryUi();
 
-  Serial.println("UI ready. Commands: clock|c, weather|w, port, battery|b, battery-port|bp, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, dev<number> <0-100>, d<0-255>, show <name>, hide, help");
+  Serial.println("UI ready. Commands: clock|c, weather|w, port, battery|b, battery-port|bp, nearby|n, nearby-port|np, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, dev<number> <0-100>, d<0-255>, show <name>, hide, help");
   fetchWeather();
   startSpotifyPollTask();
 }
