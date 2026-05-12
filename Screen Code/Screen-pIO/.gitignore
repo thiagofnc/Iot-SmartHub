@@ -4,3 +4,20 @@
 .vscode/launch.json
 .vscode/ipch
 2. Software/
+
+Circuit_Diagram.md
+Homework_5_Answers.md
+Power_Analysis.aux
+Power_Analysis.log
+Power_Analysis.md
+Power_Analysis.out
+Power_Analysis.pdf
+Power_Analysis.tex
+build_chk.log
+homework_5.pdf
+lib/DHTesp/
+pio_out.log
+pio_out2.log
+pio_out3.log
+presentation.md
+test_worldcup_fetcher.py

@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "LoRaWan_APP.h"
+#include "DHTesp.h"
 
 #define RF_FREQUENCY                                915000000   // Hz
 #define TX_OUTPUT_POWER                             14        // dBm
@@ -11,12 +12,13 @@
 #define LORA_FIX_LENGTH_PAYLOAD_ON                  false
 #define LORA_IQ_INVERSION_ON                        false
 #define BUFFER_SIZE                                 50 
-#define SENSOR_PIN                                  5
+#define DHT_PIN                                     7
 
 char txpacket[BUFFER_SIZE];
 int seqNum = 1;
 bool lora_idle = true;
 static RadioEvents_t RadioEvents;
+DHTesp dht;
 
 unsigned long license_1[4] = { 0x4ACE2716, 0x75C9401B, 0x0E8AEEB7, 0xB67AD1D2 };
 
@@ -33,7 +35,10 @@ void OnTxTimeout( void ) {
 
 void setup() {
     Serial.begin(115200);
-    pinMode(SENSOR_PIN, INPUT);
+    
+    // Initialize DHT11 sensor
+    dht.setup(DHT_PIN, DHTesp::DHT11);
+    
     // Heltec LoRa Initialization
     Mcu.setlicense(license_1, HELTEC_BOARD);
     Mcu.begin(HELTEC_BOARD, SLOW_CLK_TPYE);
@@ -60,11 +65,11 @@ void loop() {
     if(lora_idle == true) {
         delay(10000); // 10-second delay between sends
         
-        // Read sensor data
-        int sensorValue = analogRead(SENSOR_PIN);
+        // Read DHT11 sensor data
+        TempAndHumidity newValues = dht.getTempAndHumidity();
         
         // Construct the payload matching the Receiver's parsing format (T:xx.x H:xx.x)
-        sprintf(txpacket, "T:%d.0 H:0.0", sensorValue);
+        sprintf(txpacket, "T:%.1f H:%.1f", newValues.temperature, newValues.humidity);
    
         Serial.printf("Sending packet \"%s\" , length %d\r\n", txpacket, strlen(txpacket));
         Radio.Send( (uint8_t *)txpacket, strlen(txpacket) );
