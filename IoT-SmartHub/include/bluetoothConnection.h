@@ -8,6 +8,13 @@ class BluetoothConnection {
 public:
   using MessageHandler = void (*)(const String &message);
   using ConnectionHandler = void (*)(bool connected);
+  static constexpr size_t kMaxNearbyDevices = 5;
+
+  struct NearbyDevice {
+    String name;
+    String address;
+    int rssi = -127;
+  };
 
   struct Config {
     const char *deviceName = "IoT-SmartHub";
@@ -19,16 +26,17 @@ public:
     bool scanNearbyDevices = true;
     unsigned long scanIntervalMs = 2000;
     uint32_t scanDurationSeconds = 1;
+    bool printTargetDetails = false;
   };
 
   void begin();
   void begin(const Config &config);
   void loop();
 
-  bool isConnected() const;
   bool isTargetConnected() const;
   String getTargetDeviceName() const;
   String getTargetModelNumber() const;
+  size_t getNearbyDevices(NearbyDevice *devices, size_t maxDevices) const;
   void connectToTarget(const char *macAddress);
   void sendMessage(const String &message);
 
@@ -50,6 +58,8 @@ private:
   void dumpTargetGatt();
   void readTargetDeviceInfo();
   void scanNearbyDevices();
+  void clearNearbyDevices();
+  void addNearbyDevice(const String &name, const String &address, int rssi);
 
   MessageHandler messageHandler = nullptr;
   ConnectionHandler connectionHandler = nullptr;
@@ -60,10 +70,13 @@ private:
   bool nearbyScanEnabled = false;
   bool targetAutoConnectBlocked = false;
   bool shouldDumpTargetGatt = false;
+  bool printTargetDetails = false;
   int targetConnectFailures = 0;
   String targetMacAddress;
   String targetDeviceName = "--";
   String targetModelNumber = "--";
+  NearbyDevice nearbyDevices[kMaxNearbyDevices];
+  size_t nearbyDeviceCount = 0;
   unsigned long targetReconnectIntervalMs = 10000;
   unsigned long lastTargetConnectAttempt = 0;
   unsigned long scanIntervalMs = 2000;

@@ -10,14 +10,34 @@
 #include <BLERemoteCharacteristic.h>
 #include <BLERemoteService.h>
 
+#include <cctype>
+#include <map>
+
 namespace {
 BLEServer *server = nullptr;
 BLECharacteristic *txCharacteristic = nullptr;
 BLEClient *targetClient = nullptr;
 constexpr int kMaxTargetConnectFailures = 3;
+constexpr unsigned long kAdvertisingRestartDelayMs = 500;
 
+// Accept only the normal BLE MAC format: AA:BB:CC:DD:EE:FF.
 bool hasMacAddress(const String &macAddress) {
-  return macAddress.length() == 17;
+  if (macAddress.length() != 17) {
+    return false;
+  }
+
+  for (int i = 0; i < 17; ++i) {
+    const char character = macAddress.charAt(i);
+    if ((i + 1) % 3 == 0) {
+      if (character != ':') {
+        return false;
+      }
+    } else if (!std::isxdigit(static_cast<unsigned char>(character))) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 bool isGalaxyDeviceName(const std::string &name) {
@@ -87,11 +107,13 @@ void BluetoothConnection::begin() {
 }
 
 void BluetoothConnection::begin(const Config &config) {
+  // Start BLE as a small UART-style server for phone or app messages.
   BLEDevice::init(config.deviceName);
   targetReconnectIntervalMs = config.targetReconnectIntervalMs;
   nearbyScanEnabled = config.scanNearbyDevices;
   scanIntervalMs = config.scanIntervalMs;
   scanDurationSeconds = config.scanDurationSeconds;
+  printTargetDetails = config.printTargetDetails;
 
   server = BLEDevice::createServer();
   server->setCallbacks(new ServerCallbacks(*this));
@@ -123,8 +145,9 @@ void BluetoothConnection::begin(const Config &config) {
 }
 
 void BluetoothConnection::loop() {
+  // Advertising must be restarted after a client disconnects.
   if (shouldRestartAdvertising) {
-    delay(500);
+    delay(kAdvertisingRestartDelayMs);
     BLEDevice::startAdvertising();
     shouldRestartAdvertising = false;
   }
@@ -134,15 +157,12 @@ void BluetoothConnection::loop() {
   }
 
   if (targetConnected && shouldDumpTargetGatt) {
+    // Print watch services once after the target connects.
     shouldDumpTargetGatt = false;
     dumpTargetGatt();
   }
 
   scanNearbyDevices();
-}
-
-bool BluetoothConnection::isConnected() const {
-  return connected;
 }
 
 bool BluetoothConnection::isTargetConnected() const {
@@ -157,10 +177,26 @@ String BluetoothConnection::getTargetModelNumber() const {
   return targetModelNumber;
 }
 
+size_t BluetoothConnection::getNearbyDevices(NearbyDevice *devices,
+                                             size_t maxDevices) const {
+  if (devices == nullptr || maxDevices == 0) {
+    return 0;
+  }
+
+  const size_t count = min(nearbyDeviceCount, maxDevices);
+  for (size_t i = 0; i < count; ++i) {
+    devices[i] = nearbyDevices[i];
+  }
+
+  return count;
+}
+
 void BluetoothConnection::connectToTarget(const char *macAddress) {
+  // Save the target watch address and reset connection retry state.
   String previousAddress = targetMacAddress;
   targetMacAddress = macAddress == nullptr ? "" : macAddress;
   targetMacAddress.trim();
+  targetMacAddress.toUpperCase();
   targetConnectionEnabled = hasMacAddress(targetMacAddress);
   targetConnected = false;
   lastTargetConnectAttempt = 0;
@@ -176,6 +212,7 @@ void BluetoothConnection::connectToTarget(const char *macAddress) {
 }
 
 void BluetoothConnection::sendMessage(const String &message) {
+  // Notify the connected BLE peer when a TX characteristic is available.
   if (!connected || txCharacteristic == nullptr) {
     return;
   }
@@ -212,7 +249,7 @@ void BluetoothConnection::handleDisconnect() {
 void BluetoothConnection::handleTargetConnect() {
   targetConnected = true;
   targetConnectFailures = 0;
-  shouldDumpTargetGatt = true;
+  shouldDumpTargetGatt = printTargetDetails;
   Serial.print("Connected to BLE target: ");
   Serial.println(targetMacAddress);
 }
@@ -230,6 +267,7 @@ void BluetoothConnection::handleMessage(const String &message) {
 }
 
 void BluetoothConnection::attemptTargetConnection() {
+  // Retry direct target connections at a fixed interval.
   if (!targetConnectionEnabled || targetConnected) {
     return;
   }
@@ -264,7 +302,8 @@ void BluetoothConnection::attemptTargetConnection() {
 }
 
 void BluetoothConnection::attemptTargetConnection(BLEAdvertisedDevice &device) {
-  if (targetConnected) {
+  // Connect using the advertised device when the watch is found by scanning.
+  if (!targetConnectionEnabled || targetConnected) {
     return;
   }
 
@@ -296,6 +335,7 @@ void BluetoothConnection::attemptTargetConnection(BLEAdvertisedDevice &device) {
 }
 
 void BluetoothConnection::dumpTargetGatt() {
+  // List discovered services and characteristics for debugging the watch.
   if (targetClient == nullptr || !targetClient->isConnected()) {
     return;
   }
@@ -347,6 +387,7 @@ void BluetoothConnection::dumpTargetGatt() {
 }
 
 void BluetoothConnection::readTargetDeviceInfo() {
+  // Read standard BLE device information when the target exposes it.
   targetDeviceName = "--";
   targetModelNumber = "--";
 
@@ -377,7 +418,8 @@ void BluetoothConnection::readTargetDeviceInfo() {
 }
 
 void BluetoothConnection::scanNearbyDevices() {
-  if (!nearbyScanEnabled || targetConnected) {
+  // Scan for nearby BLE devices and connect when the target watch is found.
+  if (!nearbyScanEnabled) {
     return;
   }
 
@@ -396,49 +438,82 @@ void BluetoothConnection::scanNearbyDevices() {
   BLEScanResults results = scan->start(scanDurationSeconds, false);
   const int count = results.getCount();
   bool foundGalaxyDevice = false;
+  clearNearbyDevices();
 
   for (int i = 0; i < count; ++i) {
     BLEAdvertisedDevice device = results.getDevice(i);
     const std::string name = device.haveName() ? device.getName() : "";
+    const String deviceName = name.empty() ? "Unknown" : String(name.c_str());
+    String deviceAddress(device.getAddress().toString().c_str());
+    deviceAddress.toUpperCase();
+
+    addNearbyDevice(deviceName, deviceAddress, device.getRSSI());
+
     if (!isGalaxyDeviceName(name)) {
       continue;
     }
 
-    if (!foundGalaxyDevice) {
+    if (printTargetDetails && !foundGalaxyDevice) {
       Serial.println();
       Serial.println("Target BLE watch:");
       foundGalaxyDevice = true;
     }
 
-    const std::string serviceUuid =
-        device.haveServiceUUID() ? device.getServiceUUID().toString() : "";
+    if (printTargetDetails) {
+      const std::string serviceUuid =
+          device.haveServiceUUID() ? device.getServiceUUID().toString() : "";
 
-    Serial.printf("  %s  RSSI=%d",
-                  device.getAddress().toString().c_str(),
-                  device.getRSSI());
+      Serial.printf("  %s  RSSI=%d",
+                    device.getAddress().toString().c_str(),
+                    device.getRSSI());
 
-    Serial.printf("  name=\"%s\"", name.c_str());
+      Serial.printf("  name=\"%s\"", name.c_str());
 
-    if (!serviceUuid.empty()) {
-      Serial.printf("  service=%s", serviceUuid.c_str());
+      if (!serviceUuid.empty()) {
+        Serial.printf("  service=%s", serviceUuid.c_str());
+      }
+
+      Serial.println();
     }
 
-    Serial.println();
-
-    String discoveredAddress(device.getAddress().toString().c_str());
-    discoveredAddress.toUpperCase();
-    if (targetAutoConnectBlocked && targetMacAddress == discoveredAddress) {
+    if (targetAutoConnectBlocked && targetMacAddress == deviceAddress) {
       continue;
     }
 
-    if (!targetConnectionEnabled || targetMacAddress != discoveredAddress) {
+    if (!targetConnectionEnabled || targetMacAddress != deviceAddress) {
       Serial.print("Found target watch; will connect to ");
-      Serial.println(discoveredAddress);
-      connectToTarget(discoveredAddress.c_str());
+      Serial.println(deviceAddress);
+      connectToTarget(deviceAddress.c_str());
     }
 
     attemptTargetConnection(device);
   }
 
   scan->clearResults();
+}
+
+void BluetoothConnection::clearNearbyDevices() {
+  nearbyDeviceCount = 0;
+}
+
+void BluetoothConnection::addNearbyDevice(const String &name,
+                                          const String &address,
+                                          int rssi) {
+  size_t insertIndex = nearbyDeviceCount;
+  if (nearbyDeviceCount < kMaxNearbyDevices) {
+    ++nearbyDeviceCount;
+  } else if (rssi <= nearbyDevices[kMaxNearbyDevices - 1].rssi) {
+    return;
+  } else {
+    insertIndex = kMaxNearbyDevices - 1;
+  }
+
+  while (insertIndex > 0 && rssi > nearbyDevices[insertIndex - 1].rssi) {
+    nearbyDevices[insertIndex] = nearbyDevices[insertIndex - 1];
+    --insertIndex;
+  }
+
+  nearbyDevices[insertIndex].name = name;
+  nearbyDevices[insertIndex].address = address;
+  nearbyDevices[insertIndex].rssi = rssi;
 }
