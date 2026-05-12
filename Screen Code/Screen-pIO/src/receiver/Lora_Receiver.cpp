@@ -3,7 +3,7 @@
 #define RF_FREQUENCY                                915000000 // Hz
 #define TX_OUTPUT_POWER                             14        // dBm
 #define LORA_BANDWIDTH                              0         // [0: 125 kHz]
-#define LORA_SPREADING_FACTOR                       12        // SF12
+#define LORA_SPREADING_FACTOR                       7        // SF7         
 #define LORA_CODINGRATE                             3         // [3: 4/7]
 #define LORA_PREAMBLE_LENGTH                        8         
 #define LORA_SYMBOL_TIMEOUT                         0         
@@ -19,6 +19,9 @@ static RadioEvents_t RadioEvents;
 double Lora_Receiver::lastTemp = 0.0;
 double Lora_Receiver::lastHum = 0.0;
 bool Lora_Receiver::newDataReceived = false;
+
+unsigned long license_1[4] = { 0xE45FC246, 0x44C995C9, 0x3FA18B6F, 0xF066DCAF };
+
 
 void Lora_Receiver::OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr) {
     memcpy(rxpacket, payload, size );
@@ -54,7 +57,14 @@ void Lora_Receiver::init() {
     Serial.println("Lora_Receiver initialized");
     
     // Heltec Initialization
+    Mcu.setlicense(license_1, HELTEC_BOARD);
     Mcu.begin(HELTEC_BOARD, SLOW_CLK_TPYE);
+    
+    // V4-specific: Power on the Front-End Module (FEM) and configure TX/RX switch
+    pinMode(2, OUTPUT);
+    digitalWrite(2, HIGH);   // FEM enable — powers the antenna path
+    pinMode(46, OUTPUT);
+    digitalWrite(46, LOW);   // TX/RX switch — LOW for RX
 
     RadioEvents.RxDone = OnRxDone;
     Radio.Init( &RadioEvents );
@@ -72,4 +82,5 @@ void Lora_Receiver::receivePacket() {
         lora_idle = false;
         Radio.Rx(0);
     }
+    Radio.IrqProcess();
 }
