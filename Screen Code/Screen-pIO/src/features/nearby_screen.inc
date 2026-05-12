@@ -11,9 +11,9 @@
 namespace {
 
 constexpr int kNearbyLandscapeCardW = 688;
-constexpr int kNearbyLandscapeCardH = 80;
+constexpr int kNearbyLandscapeCardH = 85;
 constexpr int kNearbyPortraitCardW = 392;
-constexpr int kNearbyPortraitCardH = 100;
+constexpr int kNearbyPortraitCardH = 105;
 
 uint32_t rssiColor(int rssi) {
   if (rssi >= -55) return 0x38EF7D;   // strong — green
@@ -27,6 +27,29 @@ int rssiBarsLit(int rssi) {
   if (rssi >= -70) return 3;
   if (rssi >= -82) return 2;
   return 1;
+}
+
+// Rough BLE distance estimate via the log-distance path-loss model.
+// When the device advertises TX power we treat (TX - 41 dB) as the calibrated
+// signal at 1 m (2.4 GHz free-space loss). Otherwise we fall back to the
+// common -59 dBm BLE assumption. n = 2.5 is a reasonable indoor exponent.
+// This is rough — RSSI varies wildly with antenna orientation and obstacles.
+float estimateDistanceMeters(int rssi, int txPower) {
+  if (rssi >= 0) return -1.0f;
+  const float refPower = (txPower == INT_MIN) ? -59.0f : ((float)txPower - 41.0f);
+  const float n = 2.5f;
+  return powf(10.0f, (refPower - (float)rssi) / (10.0f * n));
+}
+
+void formatDistance(char *out, size_t outSize, float meters) {
+  if (meters < 0.0f) { snprintf(out, outSize, "--"); return; }
+  if (meters < 10.0f) {
+    snprintf(out, outSize, "~%.1f m", meters);
+  } else if (meters < 100.0f) {
+    snprintf(out, outSize, "~%.0f m", meters);
+  } else {
+    snprintf(out, outSize, "far");
+  }
 }
 
 void styleChip(lv_obj_t *chip, const char *text, uint32_t accent) {
@@ -98,10 +121,10 @@ void makeNearbyCard(NearbyCardUi &ui, lv_obj_t *parent, const NearbyDevice &dev,
 
   char metaBuf[80];
   if (dev.companyId != 0x0000) {
-    snprintf(metaBuf, sizeof(metaBuf), "%s  \xC2\xB7  %s  \xC2\xB7  0x%04X",
+    snprintf(metaBuf, sizeof(metaBuf), "%s  /  %s  /  0x%04X",
              dev.mac, dev.vendor, dev.companyId);
   } else {
-    snprintf(metaBuf, sizeof(metaBuf), "%s  \xC2\xB7  %s  \xC2\xB7  no CID",
+    snprintf(metaBuf, sizeof(metaBuf), "%s  /  %s  /  no CID",
              dev.mac, dev.vendor);
   }
   ui.meta = makeLabel(ui.card, metaBuf, &lv_font_montserrat_12, COL_INK_3);
@@ -131,23 +154,24 @@ void makeNearbyCard(NearbyCardUi &ui, lv_obj_t *parent, const NearbyDevice &dev,
     styleChip(ui.chips[i], dev.services[i], dev.accent);
   }
 
-  // Right column: RSSI number, signal bars, TX power
+  // Right column: estimated distance + signal-strength bars.
   const int rightX = cardW - rightColW + 4;
 
-  char rssiBuf[16];
-  snprintf(rssiBuf, sizeof(rssiBuf), "%d dBm", dev.rssi);
-  ui.rssiNum = makeLabel(ui.card, rssiBuf,
-                         landscape ? &lv_font_montserrat_18 : &lv_font_montserrat_16,
-                         rssiColor(dev.rssi));
-  lv_obj_set_size(ui.rssiNum, rightColW - 14, landscape ? 24 : 22);
-  lv_obj_set_style_text_align(ui.rssiNum, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_set_pos(ui.rssiNum, rightX, landscape ? 6 : 8);
+  char distBuf[16];
+  formatDistance(distBuf, sizeof(distBuf),
+                 estimateDistanceMeters(dev.rssi, dev.txPower));
+  ui.distance = makeLabel(ui.card, distBuf,
+                          landscape ? &lv_font_montserrat_18 : &lv_font_montserrat_16,
+                          rssiColor(dev.rssi));
+  lv_obj_set_size(ui.distance, rightColW - 14, landscape ? 24 : 22);
+  lv_obj_set_style_text_align(ui.distance, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_set_pos(ui.distance, rightX, landscape ? 10 : 12);
 
-  // 4 vertical signal bars, ascending heights, anchored to the bottom of a
-  // common baseline so they look like a phone-style signal indicator.
+  // 4 vertical signal bars, ascending heights, anchored to a common baseline
+  // so they look like a phone-style signal indicator.
   const int barW = 5;
   const int barGap = 3;
-  const int barsBaseY = landscape ? 56 : 60;       // baseline (bars grow up)
+  const int barsBaseY = landscape ? 60 : 64;
   const int barHeights[4] = {6, 10, 14, 18};
   const int litCount = rssiBarsLit(dev.rssi);
   const uint32_t litCol = rssiColor(dev.rssi);
@@ -163,17 +187,6 @@ void makeNearbyCard(NearbyCardUi &ui, lv_obj_t *parent, const NearbyDevice &dev,
     lv_obj_set_style_bg_color(ui.rssiBars[i], hex(litCol), 0);
     lv_obj_set_style_bg_opa(ui.rssiBars[i], i < litCount ? LV_OPA_COVER : LV_OPA_30, 0);
   }
-
-  char txBuf[24];
-  if (dev.txPower == INT_MIN) {
-    snprintf(txBuf, sizeof(txBuf), "TX --");
-  } else {
-    snprintf(txBuf, sizeof(txBuf), "TX %d dBm", dev.txPower);
-  }
-  ui.txPower = makeLabel(ui.card, txBuf, &lv_font_montserrat_12, COL_INK_3);
-  lv_obj_set_size(ui.txPower, rightColW - 14, 16);
-  lv_obj_set_style_text_align(ui.txPower, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_set_pos(ui.txPower, rightX, landscape ? 34 : 36);
 }
 
 void buildNearbyScreenCommon(NearbyUi &ui, lv_obj_t *parent, bool landscape,
@@ -185,16 +198,7 @@ void buildNearbyScreenCommon(NearbyUi &ui, lv_obj_t *parent, bool landscape,
   lv_obj_set_style_bg_color(ui.root, hex(COL_BG_1), 0);
   lv_obj_set_style_bg_opa(ui.root, LV_OPA_COVER, 0);
 
-  // Ambient blobs to match the rest of the dashboard's mood.
-  if (landscape) {
-    ambientBlob(ui.root, 140, 140, 360, COL_AMB_BLUE, LV_OPA_20);
-    ambientBlob(ui.root, 680, 380, 360, COL_AMB_PURPLE, LV_OPA_20);
-  } else {
-    ambientBlob(ui.root, 110, 140, 340, COL_AMB_BLUE, LV_OPA_20);
-    ambientBlob(ui.root, 380, 660, 360, COL_AMB_PURPLE, LV_OPA_20);
-  }
-
-  buildStatusRow(ui.root, ui.status, "CONNECTING", "BLE \xC2\xB7 SCAN");
+  buildStatusRow(ui.root, ui.status, "CONNECTING", "BLE / SCAN");
   if (!landscape) {
     lv_obj_t *statusRow = lv_obj_get_parent(ui.status.dot);
     lv_obj_set_size(statusRow, screenW - 56, 22);
@@ -215,7 +219,7 @@ void buildNearbyScreenCommon(NearbyUi &ui, lv_obj_t *parent, bool landscape,
   lv_obj_set_pos(eyebrow, eyebrowX + 32, 51);
 
   char countBuf[40];
-  snprintf(countBuf, sizeof(countBuf), "%d DEVICES  \xC2\xB7  PLACEHOLDER FEED",
+  snprintf(countBuf, sizeof(countBuf), "%d DEVICES  /  PLACEHOLDER FEED",
            kNearbyDeviceCount);
   ui.headerCount = makeLabel(ui.root, countBuf, &lv_font_montserrat_12, COL_INK_3);
   lv_obj_set_style_text_letter_space(ui.headerCount, 1, 0);

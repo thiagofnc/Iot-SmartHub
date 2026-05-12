@@ -191,9 +191,8 @@ struct NearbyCardUi {
   lv_obj_t *meta = nullptr;
   lv_obj_t *chipRow = nullptr;
   lv_obj_t *chips[kNearbyMaxServices] = {nullptr};
-  lv_obj_t *rssiNum = nullptr;
-  lv_obj_t *rssiBars[4] = {nullptr};
-  lv_obj_t *txPower = nullptr;
+  lv_obj_t *distance = nullptr;       // "~1.4 m" derived from RSSI + TX
+  lv_obj_t *rssiBars[4] = {nullptr};  // still a visual cue for signal strength
 };
 
 struct NearbyUi {
