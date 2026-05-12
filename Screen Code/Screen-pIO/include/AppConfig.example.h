@@ -18,3 +18,8 @@ constexpr char SPOTIFY_MARKET[] = "US";
 
 // Optional. Leave empty to control Spotify's currently active device.
 constexpr char SPOTIFY_DEVICE_ID[] = "";
+
+// football-data.org API key for the World Cup screen. Register a free
+// account at https://www.football-data.org/client/register to get one.
+// Leave empty to disable the World Cup screen's data fetching.
+constexpr char FOOTBALLDATA_API_KEY[] = "YOUR_FOOTBALLDATA_API_KEY";

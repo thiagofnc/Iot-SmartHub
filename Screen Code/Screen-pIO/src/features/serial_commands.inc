@@ -27,6 +27,8 @@ void handleSerialCommands() {
       if (cmd == "battery-port" || cmd == "bport" || cmd == "bp") { showScreen(ScreenIndex::BatteryPortrait); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "nearby" || cmd == "n") { showScreen(ScreenIndex::NearbyDevices); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "nearby-port" || cmd == "nport" || cmd == "np") { showScreen(ScreenIndex::NearbyDevicesPortrait); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "wc" || cmd == "world" || cmd == "worldcup") { showScreen(ScreenIndex::WorldCup); Serial.println(screenName(currentScreen)); return; }
+      if (cmd == "wc-port" || cmd == "wcp" || cmd == "wcport") { showScreen(ScreenIndex::WorldCupPortrait); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "music" || cmd == "m") { showScreen(ScreenIndex::Music); Serial.println(screenName(currentScreen)); return; }
       if (cmd == "rotate") {
         if (currentScreen == ScreenIndex::Clock) showScreen(ScreenIndex::Portrait);
@@ -35,6 +37,8 @@ void handleSerialCommands() {
         else if (currentScreen == ScreenIndex::BatteryPortrait) showScreen(ScreenIndex::Battery);
         else if (currentScreen == ScreenIndex::NearbyDevices) showScreen(ScreenIndex::NearbyDevicesPortrait);
         else if (currentScreen == ScreenIndex::NearbyDevicesPortrait) showScreen(ScreenIndex::NearbyDevices);
+        else if (currentScreen == ScreenIndex::WorldCup) showScreen(ScreenIndex::WorldCupPortrait);
+        else if (currentScreen == ScreenIndex::WorldCupPortrait) showScreen(ScreenIndex::WorldCup);
         else if (currentScreen == ScreenIndex::Music) showScreen(ScreenIndex::MusicPortrait);
         else if (currentScreen == ScreenIndex::MusicPortrait) showScreen(ScreenIndex::Music);
         Serial.println(screenName(currentScreen));
@@ -94,6 +98,11 @@ void handleSerialCommands() {
         else Serial.println(spotify.lastError.c_str());
         return;
       }
+      if (cmd == "wc-refresh" || cmd == "wcr") {
+        if (startWcPollTask()) Serial.println("wc refresh queued");
+        else Serial.println(wcMatch.lastError.isEmpty() ? "wc busy" : wcMatch.lastError.c_str());
+        return;
+      }
       if (cmd == "cover") {
         ensureMusicCover();
         return;
@@ -130,7 +139,7 @@ void handleSerialCommands() {
         Serial.println("use d<0-255>"); return;
       }
       if (cmd == "help" || cmd == "?") {
-        Serial.println("commands: clock|c, weather|w, port, battery|b, battery-port|bp, nearby|n, nearby-port|np, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, dev<number> <0-100>, d<0-255>, show <name>, hide, help|?");
+        Serial.println("commands: clock|c, weather|w, port, battery|b, battery-port|bp, nearby|n, nearby-port|np, wc, wc-port|wcp, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, wc-refresh|wcr, dev<number> <0-100>, d<0-255>, show <name>, hide, help|?");
         return;
       }
       Serial.printf("unknown: %s\n", cmd.c_str());

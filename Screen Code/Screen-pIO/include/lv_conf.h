@@ -23,19 +23,23 @@
 /*=========================
    MEMORY SETTINGS
  *=========================*/
-#define LV_MEM_CUSTOM 0
+#define LV_MEM_CUSTOM 1
 #if LV_MEM_CUSTOM == 0
-    #define LV_MEM_SIZE (128U * 1024U)
+    #define LV_MEM_SIZE (160U * 1024U)
     #define LV_MEM_ADR 0
     #if LV_MEM_ADR == 0
         #undef LV_MEM_POOL_INCLUDE
         #undef LV_MEM_POOL_ALLOC
     #endif
 #else
-    #define LV_MEM_CUSTOM_INCLUDE <stdlib.h>
-    #define LV_MEM_CUSTOM_ALLOC   malloc
-    #define LV_MEM_CUSTOM_FREE    free
-    #define LV_MEM_CUSTOM_REALLOC realloc
+    // Route LVGL's heap into PSRAM so it doesn't fragment the precious
+    // internal RAM that mbedtls / TLS handshakes need contiguous chunks of.
+    // Slightly slower for LVGL operations (PSRAM cached on the S3) but worth
+    // it for reliable HTTPS to football-data.org / flagcdn / spotify.
+    #define LV_MEM_CUSTOM_INCLUDE "esp_heap_caps.h"
+    #define LV_MEM_CUSTOM_ALLOC(size) heap_caps_malloc((size), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+    #define LV_MEM_CUSTOM_FREE        heap_caps_free
+    #define LV_MEM_CUSTOM_REALLOC(p, s) heap_caps_realloc((p), (s), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
 #endif
 
 #define LV_MEM_BUF_MAX_NUM 16
@@ -329,7 +333,7 @@
 #define LV_USE_FS_WIN32 0
 #define LV_USE_FS_FATFS 0
 #define LV_USE_FS_LITTLEFS 0
-#define LV_USE_PNG 0
+#define LV_USE_PNG 1
 #define LV_USE_BMP 0
 #define LV_USE_SJPG 0
 #define LV_USE_GIF 0

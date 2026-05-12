@@ -36,9 +36,9 @@ constexpr uint16_t SCREEN_HEIGHT = 480;
 constexpr uint16_t PORTRAIT_WIDTH = SCREEN_HEIGHT;
 constexpr uint16_t PORTRAIT_HEIGHT = SCREEN_WIDTH;
 constexpr uint32_t WEATHER_REFRESH_MS = 10UL * 60UL * 1000UL;
-constexpr uint32_t SPOTIFY_PLAYING_REFRESH_MS = 1000UL;
-constexpr uint32_t SPOTIFY_PAUSED_REFRESH_MS = 1000UL;
-constexpr uint32_t SPOTIFY_IDLE_REFRESH_MS = 1000UL;
+constexpr uint32_t SPOTIFY_PLAYING_REFRESH_MS = 5000UL;
+constexpr uint32_t SPOTIFY_PAUSED_REFRESH_MS = 5000UL;
+constexpr uint32_t SPOTIFY_IDLE_REFRESH_MS = 5000UL;
 constexpr uint32_t WIFI_RETRY_MS = 15000UL;
 constexpr uint32_t HTTP_TIMEOUT_MS = 15000UL;
 constexpr uint32_t STARTUP_COLOR_TEST_MS = 250UL;
@@ -92,11 +92,13 @@ enum class ScreenIndex : int {
   Portrait = 2,
   Battery = 3,
   NearbyDevices = 4,
-  BatteryPortrait = 5,
-  NearbyDevicesPortrait = 6,
-  Music = 7,    // Reached via "up" from Clock; not part of the swipe carousel.
-  MusicPortrait = 8,
-  Count = 5,    // Count of screens that participate in swipe rotation.
+  WorldCup = 5,
+  BatteryPortrait = 6,
+  NearbyDevicesPortrait = 7,
+  WorldCupPortrait = 8,
+  Music = 9,    // Reached via "up" from Clock; not part of the swipe carousel.
+  MusicPortrait = 10,
+  Count = 6,    // Count of screens that participate in swipe rotation.
 };
 
 CrowPanelDisplay display(DISPLAY_MODEL);
@@ -207,6 +209,7 @@ lv_color_t portraitIconBuf[56 * 56];
 #include "features/battery_screen.inc"
 #include "features/music_player.inc"
 #include "features/nearby_screen.inc"
+#include "features/world_cup_screen.inc"
 
 // Screen switching
 // ---------------------------------------------------------------------------
@@ -230,8 +233,10 @@ lv_obj_t *rootForScreen(ScreenIndex s) {
     case ScreenIndex::Portrait: return portraitUi.root;
     case ScreenIndex::Battery: return batteryUi.root;
     case ScreenIndex::NearbyDevices: return nearbyUi.root;
+    case ScreenIndex::WorldCup: return wcUi.root;
     case ScreenIndex::BatteryPortrait: return batteryPortraitUi.root;
     case ScreenIndex::NearbyDevicesPortrait: return nearbyPortraitUi.root;
+    case ScreenIndex::WorldCupPortrait: return wcPortraitUi.root;
     case ScreenIndex::Music: return musicUi.root;
     case ScreenIndex::MusicPortrait: return musicPortraitUi.root;
     default: return clockUi.root;
@@ -245,8 +250,10 @@ const char *screenName(ScreenIndex s) {
     case ScreenIndex::Portrait: return "port";
     case ScreenIndex::Battery: return "battery";
     case ScreenIndex::NearbyDevices: return "nearby";
+    case ScreenIndex::WorldCup: return "wc";
     case ScreenIndex::BatteryPortrait: return "battery-port";
     case ScreenIndex::NearbyDevicesPortrait: return "nearby-port";
+    case ScreenIndex::WorldCupPortrait: return "wc-port";
     case ScreenIndex::Music: return "music";
     case ScreenIndex::MusicPortrait: return "music-portrait";
     default: return "clock";
@@ -256,6 +263,7 @@ const char *screenName(ScreenIndex s) {
 bool isPortraitScreen(ScreenIndex s) {
   return s == ScreenIndex::Portrait || s == ScreenIndex::BatteryPortrait ||
          s == ScreenIndex::NearbyDevicesPortrait ||
+         s == ScreenIndex::WorldCupPortrait ||
          s == ScreenIndex::MusicPortrait;
 }
 
@@ -301,6 +309,7 @@ void showScreen(ScreenIndex s, int direction = 0) {
   lv_obj_t *roots[] = {clockUi.root, weatherUi.root, portraitUi.root,
                        batteryUi.root, batteryPortraitUi.root,
                        nearbyUi.root, nearbyPortraitUi.root,
+                       wcUi.root, wcPortraitUi.root,
                        musicUi.root, musicPortraitUi.root};
   for (lv_obj_t *other : roots) {
     if (other && other != incoming && other != outgoing) {
@@ -412,6 +421,8 @@ void updateWifiStatusIndicator(WifiIndicatorState wifi) {
   setStatusRowWifiState(batteryPortraitUi.status, wifi);
   setStatusRowWifiState(nearbyUi.status, wifi);
   setStatusRowWifiState(nearbyPortraitUi.status, wifi);
+  setStatusRowWifiState(wcUi.status, wifi);
+  setStatusRowWifiState(wcPortraitUi.status, wifi);
   setStatusRowWifiState(musicUi.status, wifi);
   setStatusRowWifiState(musicPortraitUi.status, wifi);
 
@@ -423,6 +434,8 @@ void updateWifiStatusIndicator(WifiIndicatorState wifi) {
   if (batteryPortraitUi.status.connected) lv_label_set_text(batteryPortraitUi.status.connected, label);
   if (nearbyUi.status.connected) lv_label_set_text(nearbyUi.status.connected, label);
   if (nearbyPortraitUi.status.connected) lv_label_set_text(nearbyPortraitUi.status.connected, label);
+  if (wcUi.status.connected) lv_label_set_text(wcUi.status.connected, label);
+  if (wcPortraitUi.status.connected) lv_label_set_text(wcPortraitUi.status.connected, label);
 }
 
 void updateGlanceTile() {
@@ -656,6 +669,8 @@ void updateWeatherUi() {
 
 #include "features/spotify_api.inc"
 
+#include "features/world_cup_api.inc"
+
 #include "features/sd_image_viewer.inc"
 
 #include "features/serial_commands.inc"
@@ -808,6 +823,51 @@ void tickMusic() {
 }
 
 unsigned long lastLinkRefresh = 0;
+unsigned long lastWcUpdatedLabelTick = 0;
+
+void tickWorldCup() {
+  if (wcUiDirty) applyWcUiUpdate();
+
+  const unsigned long now = millis();
+  if (footballDataConfigured() && !wcPollInFlight) {
+    // Hold off the first fetch for 30s post-boot so weather + spotify can
+    // finish their initial SSL handshakes and the heap can settle. After
+    // that, refresh once per minute.
+    const bool firstFetchDue =
+        (wcMatch.lastFetchMs == 0) && (now >= 30UL * 1000UL);
+    const unsigned long sinceFetch = now - wcMatch.lastFetchMs;
+    const bool periodicDue =
+        (wcMatch.lastFetchMs != 0) && (sinceFetch >= 60UL * 1000UL);
+    if (firstFetchDue || periodicDue) {
+      // mbedtls needs ~32KB of contiguous DMA-capable heap for the SSL
+      // handshake. Skip this round if we're below a safe floor — we'll
+      // try again on the next tick once whatever is holding the heap
+      // (usually a concurrent Spotify poll) finishes.
+      const size_t largest =
+          heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      if (largest < 50U * 1024U) {
+        static unsigned long lastSkipLog = 0;
+        if (now - lastSkipLog > 10000UL) {
+          Serial.printf("[wc] skip — internal largest block %u (need 50k)\n",
+                        (unsigned)largest);
+          lastSkipLog = now;
+        }
+        // Retry sooner than the full 60s — bump lastFetchMs forward so the
+        // next attempt fires in ~5s.
+        if (wcMatch.lastFetchMs != 0) wcMatch.lastFetchMs = now - 55UL * 1000UL;
+      } else {
+        startWcPollTask();
+      }
+    }
+  }
+
+  // Tick the "updated Nm ago" label every 30s so it stays current even when
+  // we're not refetching.
+  if (wcMatch.valid && now - lastWcUpdatedLabelTick >= 30000UL) {
+    lastWcUpdatedLabelTick = now;
+    updateWorldCupUi();
+  }
+}
 
 void tickLinkState() {
   const unsigned long now = millis();
@@ -859,6 +919,8 @@ void setup() {
   buildBatteryPortraitScreen(scr);
   buildNearbyScreen(scr);
   buildNearbyPortraitScreen(scr);
+  buildWorldCupScreen(scr);
+  buildWorldCupPortraitScreen(scr);
   buildMusicScreen(scr);
   buildMusicPortraitScreen(scr);
   showScreen(ScreenIndex::Clock, 0);
@@ -883,7 +945,7 @@ void setup() {
   updatePortraitClockUi();
   updateBatteryUi();
 
-  Serial.println("UI ready. Commands: clock|c, weather|w, port, battery|b, battery-port|bp, nearby|n, nearby-port|np, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, dev<number> <0-100>, d<0-255>, show <name>, hide, help");
+  Serial.println("UI ready. Commands: clock|c, weather|w, port, battery|b, battery-port|bp, nearby|n, nearby-port|np, wc, wc-port|wcp, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, dev<number> <0-100>, d<0-255>, show <name>, hide, help");
   fetchWeather();
   startSpotifyPollTask();
 }
@@ -896,6 +958,7 @@ void loop() {
   tickAutoRotate();
   tickMusic();
   tickSpotify();
+  tickWorldCup();
   tickLinkState();
 
   if ((WiFi.status() != WL_CONNECTED && (now - lastWeatherAttempt) >= WIFI_RETRY_MS) ||

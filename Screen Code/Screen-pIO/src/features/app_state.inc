@@ -206,6 +206,88 @@ NearbyUi nearbyUi;
 NearbyUi nearbyPortraitUi;
 
 // ---------------------------------------------------------------------------
+// World Cup screen state (football-data.org)
+// ---------------------------------------------------------------------------
+struct WorldCupTeamSlot {
+  String name;        // "United States"
+  String shortName;   // "USA"
+  String tla;         // FIFA three-letter code, "USA"
+  String isoCode;     // ISO Alpha-2 lower-case, "us" — empty if unknown
+  int score = -1;     // -1 when match hasn't kicked off / no data
+};
+
+struct WorldCupMatch {
+  bool valid = false;
+  WorldCupTeamSlot home;
+  WorldCupTeamSlot away;
+  String status;       // SCHEDULED / TIMED / IN_PLAY / PAUSED / FINISHED / POSTPONED / SUSPENDED
+  String stage;        // GROUP_STAGE / LAST_16 / QUARTER_FINALS / SEMI_FINALS / FINAL
+  String group;        // "Group A" or empty
+  int matchday = 0;
+  long utcDate = 0;    // epoch (seconds, UTC)
+  int minute = 0;      // live elapsed minute; 0 when not in play
+  String venue;
+  String referee;
+  String competition;  // "FIFA World Cup"
+  String lastError;
+  int lastHttpCode = 0;
+  unsigned long lastFetchMs = 0;
+};
+
+WorldCupMatch wcMatch;
+
+struct WorldCupUi {
+  lv_obj_t *root = nullptr;
+  StatusRow status;
+  lv_obj_t *headerLabel = nullptr;       // "FIFA WORLD CUP 2026"
+  lv_obj_t *stageLabel = nullptr;        // "GROUP A · MATCHDAY 1"
+  lv_obj_t *heroPanel = nullptr;
+  lv_obj_t *flagHome = nullptr;          // lv_img widget for home flag
+  lv_obj_t *flagAway = nullptr;          // lv_img widget for away flag
+  lv_obj_t *flagHomeFallback = nullptr;  // text placeholder when flag missing
+  lv_obj_t *flagAwayFallback = nullptr;
+  lv_obj_t *teamHomeShort = nullptr;     // "USA"
+  lv_obj_t *teamHomeFull = nullptr;      // "United States"
+  lv_obj_t *teamAwayShort = nullptr;
+  lv_obj_t *teamAwayFull = nullptr;
+  lv_obj_t *scoreHome = nullptr;
+  lv_obj_t *scoreSep = nullptr;          // "-" or "vs"
+  lv_obj_t *scoreAway = nullptr;
+  lv_obj_t *statusPill = nullptr;
+  lv_obj_t *statusPillLabel = nullptr;
+  lv_obj_t *kickoffValue = nullptr;
+  lv_obj_t *venueValue = nullptr;
+  lv_obj_t *stageDetailValue = nullptr;
+  lv_obj_t *refereeValue = nullptr;
+  lv_obj_t *updated = nullptr;
+};
+WorldCupUi wcUi;
+WorldCupUi wcPortraitUi;
+
+// Flag PNG buffers (shared between landscape + portrait views, since both
+// render the same two flags from the same match data).
+struct WorldCupFlagBuffer {
+  uint8_t *data = nullptr;
+  size_t size = 0;
+  lv_img_dsc_t dsc;
+  String loadedIso;
+};
+WorldCupFlagBuffer wcFlagHome;
+WorldCupFlagBuffer wcFlagAway;
+
+// Poll task + pending hand-off from worker to main thread.
+TaskHandle_t wcPollTaskHandle = nullptr;
+volatile bool wcPollInFlight = false;
+volatile bool wcUiDirty = false;
+WorldCupMatch wcPendingMatch;
+uint8_t *wcPendingFlagHomeData = nullptr;
+size_t wcPendingFlagHomeSize = 0;
+String wcPendingFlagHomeIso;
+uint8_t *wcPendingFlagAwayData = nullptr;
+size_t wcPendingFlagAwaySize = 0;
+String wcPendingFlagAwayIso;
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 ScreenIndex currentScreen = ScreenIndex::Clock;
