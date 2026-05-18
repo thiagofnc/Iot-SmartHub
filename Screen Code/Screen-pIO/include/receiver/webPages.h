@@ -150,8 +150,6 @@ const char indexHtml[] PROGMEM = R"=====(
             <select class="select-box" id="rotationSelect" onchange="updateRotation(this.value)">
                 <option value="0">0&deg; (Landscape)</option>
                 <option value="90">90&deg; (Portrait)</option>
-                <option value="180">180&deg; (Landscape Flipped)</option>
-                <option value="270">270&deg; (Portrait Flipped)</option>
             </select>
         </div>
     </div>
