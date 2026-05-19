@@ -87,6 +87,13 @@ lv_color_t *spotifyCoverBuffer = nullptr;
 lv_img_dsc_t spotifyCoverDsc;
 constexpr int kSpotifyCoverSize = 300;
 
+// Weather poll task hand-off. Worker writes weatherData on core 0, sets
+// weatherUiDirty, and the main loop calls applyWeatherUiUpdate() on its
+// next tick so LVGL is only ever touched from one thread.
+TaskHandle_t weatherPollTaskHandle = nullptr;
+volatile bool weatherPollInFlight = false;
+volatile bool weatherUiDirty = false;
+
 struct WeatherUi {
   lv_obj_t *root = nullptr;
   StatusRow status;

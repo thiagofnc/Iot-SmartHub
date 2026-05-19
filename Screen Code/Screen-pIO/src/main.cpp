@@ -869,6 +869,23 @@ void tickWorldCup() {
   }
 }
 
+// Schedule a weather refresh on a worker task. The fetch + SSL handshake
+// blocks for several seconds, so it can't live on core 1 next to LVGL.
+// Mirrors the spotify/wc pattern: write into weatherData on the worker,
+// flip weatherUiDirty, apply on the next main-loop tick.
+void tickWeather() {
+  if (weatherUiDirty) applyWeatherUiUpdate();
+  if (weatherPollInFlight) return;
+
+  const unsigned long now = millis();
+  const bool disconnected = (WiFi.status() != WL_CONNECTED);
+  const unsigned long interval = disconnected ? WIFI_RETRY_MS : WEATHER_REFRESH_MS;
+  if (now - lastWeatherAttempt >= interval) {
+    lastWeatherAttempt = now;
+    startWeatherPollTask();
+  }
+}
+
 void tickLinkState() {
   const unsigned long now = millis();
   if (now - lastLinkRefresh < 1000) return;
@@ -935,7 +952,7 @@ void setup() {
   musicLastBarAnimMs = millis();
 
   lastClockTick = millis();
-  lastWeatherAttempt = millis() - WEATHER_REFRESH_MS;
+  lastWeatherAttempt = millis();
   lastAutoRotate = millis();
   lastColonBlink = millis();
 
@@ -946,12 +963,11 @@ void setup() {
   updateBatteryUi();
 
   Serial.println("UI ready. Commands: clock|c, weather|w, port, battery|b, battery-port|bp, nearby|n, nearby-port|np, wc, wc-port|wcp, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, dev<number> <0-100>, d<0-255>, show <name>, hide, help");
-  fetchWeather();
+  startWeatherPollTask();
   startSpotifyPollTask();
 }
 
 void loop() {
-  const unsigned long now = millis();
   handleSerialCommands();
   tickClock();
   tickColonBlink();
@@ -959,14 +975,8 @@ void loop() {
   tickMusic();
   tickSpotify();
   tickWorldCup();
+  tickWeather();
   tickLinkState();
-
-  if ((WiFi.status() != WL_CONNECTED && (now - lastWeatherAttempt) >= WIFI_RETRY_MS) ||
-      (now - lastWeatherAttempt) >= WEATHER_REFRESH_MS) {
-    lastWeatherAttempt = now;
-    fetchWeather();
-    lastClockTick = millis();
-  }
 
   lv_timer_handler();
   delay(5);

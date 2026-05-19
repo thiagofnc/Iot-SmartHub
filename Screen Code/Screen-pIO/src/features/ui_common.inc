@@ -45,11 +45,13 @@ void configureTimeSyncIfNeeded() {
   ntpConfigured = true;
 }
 
+// Reached only from worker tasks via connectWifiIfNeeded(). LVGL is owned by
+// the main loop, so do not call lv_timer_handler here — delay() yields to
+// FreeRTOS so the UI core keeps running on its own.
 void waitForTimeSync() {
   const unsigned long start = millis();
   while (readSystemEpochUtc() <= 0 && (millis() - start) < NTP_SYNC_WAIT_MS) {
     delay(100);
-    lv_timer_handler();
   }
 }
 

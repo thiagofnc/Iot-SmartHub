@@ -92,7 +92,11 @@ void handleSerialCommands() {
         }
         return;
       }
-      if (cmd == "refresh" || cmd == "r") { fetchWeather(); Serial.println("refreshed"); return; }
+      if (cmd == "refresh" || cmd == "r") {
+        if (startWeatherPollTask()) Serial.println("weather refresh started");
+        else Serial.println("weather refresh skipped (task in flight)");
+        return;
+      }
       if (cmd == "spotify" || cmd == "sp") {
         if (fetchSpotifyPlayback()) Serial.println("spotify refreshed");
         else Serial.println(spotify.lastError.c_str());

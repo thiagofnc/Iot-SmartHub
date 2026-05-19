@@ -1,17 +1,19 @@
 // WiFi + OpenWeather
 // ---------------------------------------------------------------------------
+// Reached only from worker tasks (weather + world cup polls). The 15s busy
+// wait blocks the calling task, never the main loop, so the UI keeps running.
+// Do NOT call lv_timer_handler or any LVGL widget API here — that's reserved
+// for core 1's main loop. The Connecting/Offline indicator flips through
+// tickLinkState() once it samples wifiConnectInProgress.
 void connectWifiIfNeeded() {
   if (WiFi.status() == WL_CONNECTED) return;
   weatherData.lastError = "CONNECTING WI-FI";
   wifiConnectInProgress = true;
-  updateWifiStatusIndicator(WifiIndicatorState::Connecting);
-  lastRenderedWifiStatus = static_cast<int>(WifiIndicatorState::Connecting);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   const unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - start) < WIFI_RETRY_MS) {
     delay(250);
-    lv_timer_handler();
   }
   if (WiFi.status() == WL_CONNECTED) {
     configureTimeSyncIfNeeded();
@@ -20,9 +22,6 @@ void connectWifiIfNeeded() {
     weatherData.lastError = "WI-FI UNAVAILABLE";
   }
   wifiConnectInProgress = false;
-  const WifiIndicatorState wifi = currentWifiIndicatorState();
-  updateWifiStatusIndicator(wifi);
-  lastRenderedWifiStatus = static_cast<int>(wifi);
 }
 
 void showStartupIconPreview(lv_obj_t *parent) {
@@ -159,7 +158,7 @@ bool fetchAirPollution() {
   return true;
 }
 
-bool fetchWeather() {
+bool fetchWeather(bool applyUi = true) {
   if (strlen(OPENWEATHER_API_KEY) == 0) { weatherData.lastError = "MISSING API KEY"; return false; }
   if (WiFi.status() != WL_CONNECTED) connectWifiIfNeeded();
   if (WiFi.status() != WL_CONNECTED) return false;
@@ -184,9 +183,47 @@ bool fetchWeather() {
   http.end();
   if (!parseWeatherPayload(payload)) return false;
   fetchAirPollution();
+  if (applyUi) {
+    updateWeatherUi();
+    updateGlanceTile();
+    updatePortraitClockUi();
+  } else {
+    weatherUiDirty = true;
+  }
+  return true;
+}
+
+void applyWeatherUiUpdate() {
   updateWeatherUi();
   updateGlanceTile();
   updatePortraitClockUi();
+  weatherUiDirty = false;
+}
+
+void weatherPollTask(void *param) {
+  (void)param;
+  fetchWeather(false);
+  weatherPollInFlight = false;
+  weatherPollTaskHandle = nullptr;
+  vTaskDelete(nullptr);
+}
+
+bool startWeatherPollTask() {
+  if (weatherPollInFlight) return false;
+  if (strlen(OPENWEATHER_API_KEY) == 0) {
+    weatherData.lastError = "MISSING API KEY";
+    return false;
+  }
+  weatherPollInFlight = true;
+  const BaseType_t ok = xTaskCreatePinnedToCore(
+      weatherPollTask, "weather_poll", 16384, nullptr, 1,
+      &weatherPollTaskHandle, 0);
+  if (ok != pdPASS) {
+    weatherPollInFlight = false;
+    weatherPollTaskHandle = nullptr;
+    weatherData.lastError = "WEATHER TASK FAILED";
+    return false;
+  }
   return true;
 }
 
