@@ -89,6 +89,43 @@ Leave `SPOTIFY_DEVICE_ID` empty to control the currently active Spotify
 Connect device. Spotify playback-control endpoints require a Spotify Premium
 account and an active player.
 
+## Smooth UI via RTOS Tasks
+
+The screen firmware leans heavily on FreeRTOS to keep LVGL fluid while the
+ESP32 is doing slow work in the background. Every blocking network call —
+OpenWeather, Spotify, football-data.org, BLE flag PNG downloads — is offloaded
+to a one-shot worker task pinned to **core 0**. The Arduino `loop()` (and with
+it `lv_timer_handler`) owns **core 1** exclusively, so animations, swipe
+gestures, and the blinking clock colon keep rendering even during a multi-
+second TLS handshake or a 15 s Wi-Fi reconnect.
+
+The pattern is the same for each feature:
+
+1. A `start*PollTask()` function spawns an `xTaskCreatePinnedToCore` worker on
+   core 0 with an in-flight guard so duplicate fetches can't pile up.
+2. The worker performs HTTP/JSON/decoding work and writes results into shared
+   state, then sets a `volatile bool *UiDirty` flag.
+3. The next main-loop `tick*()` call sees the dirty flag, calls
+   `apply*UiUpdate()` to push the new values into LVGL widgets, and clears
+   the flag.
+
+This indirection enforces the load-bearing invariant: **LVGL is only ever
+touched from the main loop**. Worker tasks never call `lv_timer_handler` or
+any widget API — including the WiFi-reconnect and NTP-sync waits, which used
+to but no longer do.
+
+Active tasks at runtime:
+
+| Task              | Core | Cadence            | Purpose                                  |
+|-------------------|------|--------------------|------------------------------------------|
+| Arduino `loop()`  | 1    | continuous         | LVGL, animations, input, all UI updates  |
+| `weather_poll`    | 0    | every 10 min       | OpenWeather + air-pollution fetch        |
+| `spotify_poll`    | 0    | every 5 s          | Now-playing state + album-art download   |
+| `wc_poll`         | 0    | every 60 s         | football-data.org match + flag PNGs      |
+
+The core split also keeps the Wi-Fi/BT radio (which lives on core 0) close to
+the code that uses it, so the network stack never competes with LVGL for CPU.
+
 ## Repo Notes
 
 - `Screen Code/Screen-pIO/include/AppConfig.h` is intentionally local-only.
