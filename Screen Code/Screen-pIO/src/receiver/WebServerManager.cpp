@@ -1,11 +1,14 @@
 #include "WebServerManager.h"
 #include "webPages.h"
+#include "secret_do_not_open.h"
 
 // API Key referenced from OpenWeatherMapTemplate project
 const String apiKey = "29f5821965081acda326d928f69ea78d";
 const String latitud = "39.4835";
 const String longitud = "-87.3237";
 const String units = "imperial"; // Using imperial since Rose-Hulman is in the US
+
+static const char *headerKeys[] = {"User-Agent", "Cookie"};
 
 WebServerManager::WebServerManager() : server(80) {
     ip = "";
@@ -22,7 +25,7 @@ WebServerManager::WebServerManager() : server(80) {
 
 void WebServerManager::init() {
     Serial.println("WebServerManager initialized");
-    
+
     WiFi.mode(WIFI_STA);
     WiFi.begin("RHIT-OPEN", "");
     Serial.print("\nConnecting to WiFi");
@@ -40,27 +43,41 @@ void WebServerManager::init() {
 
     // Setup routes
     server.on("/", HTTP_GET, [this]() { this->handleRoot(); });
+    server.on("/login", HTTP_GET,  [this]() { this->handleLogin(); });
+    server.on("/login", HTTP_POST, [this]() { this->handleLogin(); });
+    server.on("/logout", HTTP_GET, [this]() { this->handleLogout(); });
     server.on("/api/brightness", HTTP_GET, [this]() { this->handleBrightness(); });
-    server.on("/api/rotation", HTTP_GET, [this]() { this->handleRotation(); });
-    server.on("/api/weather", HTTP_GET, [this]() { this->handleWeather(); });
+    server.on("/api/rotation",   HTTP_GET, [this]() { this->handleRotation(); });
+    server.on("/api/weather",    HTTP_GET, [this]() { this->handleWeather(); });
 
+    server.collectHeaders(headerKeys, sizeof(headerKeys) / sizeof(char *));
     server.begin();
     Serial.println("HTTP WebServer ready!");
 }
 
 void WebServerManager::getRequest() {
     server.handleClient();
-    
+
     if (millis() - lastWeatherUpdate >= WEATHER_UPDATE_INTERVAL) {
         lastWeatherUpdate = millis();
         updateOpenWeatherMap();
     }
 }
 
+bool WebServerManager::isAuthenticated() {
+    if (server.hasHeader("Cookie")) {
+        String cookie = server.header("Cookie");
+        if (cookie.indexOf("ESPSESSIONID=1") != -1) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void WebServerManager::updateOpenWeatherMap() {
     Serial.println("Polling OpenWeatherMap API...");
     if(WiFi.status() != WL_CONNECTED) return;
-    
+
     HTTPClient http;
     http.setTimeout(1500);
     String url = "http://api.openweathermap.org/data/2.5/weather?lat=" + latitud +
@@ -87,7 +104,42 @@ void WebServerManager::updateOpenWeatherMap() {
 }
 
 void WebServerManager::handleRoot() {
-    server.send(200, "text/html", indexHtml);
+    if (isAuthenticated()) {
+        server.send(200, "text/html", indexAuthHtml);
+    } else {
+        server.send(200, "text/html", indexUnauthHtml);
+    }
+}
+
+void WebServerManager::handleLogin() {
+    if (server.method() == HTTP_POST) {
+        if (server.hasArg("USERNAME") && server.hasArg("PASSWORD") &&
+            server.arg("USERNAME") == ADMIN_USERNAME &&
+            server.arg("PASSWORD") == ADMIN_PASSWORD) {
+            server.sendHeader("Location", "/");
+            server.sendHeader("Cache-Control", "no-cache");
+            server.sendHeader("Set-Cookie", "ESPSESSIONID=1");
+            server.send(303);
+            Serial.println("Admin login successful");
+            return;
+        }
+        // Wrong credentials — redirect back with error flag
+        server.sendHeader("Location", "/login?error=1");
+        server.sendHeader("Cache-Control", "no-cache");
+        server.send(303);
+        Serial.println("Login failed: wrong credentials");
+        return;
+    }
+    // GET — serve login page
+    server.send(200, "text/html", loginHtml);
+}
+
+void WebServerManager::handleLogout() {
+    server.sendHeader("Location", "/");
+    server.sendHeader("Cache-Control", "no-cache");
+    server.sendHeader("Set-Cookie", "ESPSESSIONID=0");
+    server.send(303);
+    Serial.println("Admin logged out");
 }
 
 void WebServerManager::handleBrightness() {
@@ -99,6 +151,10 @@ void WebServerManager::handleBrightness() {
 }
 
 void WebServerManager::handleRotation() {
+    if (!isAuthenticated()) {
+        server.send(401, "text/plain", "Unauthorized");
+        return;
+    }
     if (server.hasArg("value")) {
         requestedRotation = server.arg("value").toInt();
         Serial.printf("New Rotation: %d\n", requestedRotation);
@@ -107,8 +163,8 @@ void WebServerManager::handleRotation() {
 }
 
 void WebServerManager::handleWeather() {
-    String json = "{\"temp\": " + String(currentTemp, 1) + 
-                  ", \"humidity\": " + String(currentHum, 1) + 
+    String json = "{\"temp\": " + String(currentTemp, 1) +
+                  ", \"humidity\": " + String(currentHum, 1) +
                   ", \"description\": \"" + currentDesc + "\"" +
                   ", \"remoteTemp\": " + String(remoteTemp, 1) +
                   ", \"remoteHum\": " + String(remoteHum, 1) + "}";

@@ -22,6 +22,7 @@ private:
     const unsigned long WEATHER_UPDATE_INTERVAL = 10 * 60 * 1000;
     
     void updateOpenWeatherMap();
+    bool isAuthenticated();
 
 public:
     int requestedBrightness;
@@ -40,6 +41,8 @@ public:
     void handleBrightness();
     void handleRotation();
     void handleWeather();
+    void handleLogin();
+    void handleLogout();
 };
 
 #endif // WEBSERVERMANAGER_H
