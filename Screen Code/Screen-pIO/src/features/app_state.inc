@@ -255,10 +255,8 @@ struct WorldCupUi {
   lv_obj_t *scoreAway = nullptr;
   lv_obj_t *statusPill = nullptr;
   lv_obj_t *statusPillLabel = nullptr;
-  lv_obj_t *kickoffValue = nullptr;
-  lv_obj_t *venueValue = nullptr;
-  lv_obj_t *stageDetailValue = nullptr;
-  lv_obj_t *refereeValue = nullptr;
+  lv_obj_t *kickoffValue = nullptr;       // "SAT 8:00 PM" beneath status pill
+  lv_obj_t *venueValue = nullptr;         // venue beneath kickoff
   lv_obj_t *updated = nullptr;
 };
 WorldCupUi wcUi;

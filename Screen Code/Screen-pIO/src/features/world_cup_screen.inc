@@ -1,8 +1,8 @@
 // World Cup screen (landscape + portrait)
 // ---------------------------------------------------------------------------
-// Hero panel: flag + team labels + score + live-status pill. Details panel:
-// four label/value cells covering kickoff, venue, stage, referee. Same data
-// drives both orientations; one set of flag PNG buffers is shared.
+// Single hero panel: stage header, two flags + team labels, score (always
+// shown as digits, 0-0 before kickoff), and a status pill with kickoff time
+// + venue beneath it. Same data drives both orientations.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -11,28 +11,6 @@ constexpr uint32_t kWcAccent = 0x7CD4F2;
 constexpr uint32_t kWcAmber = 0xFFB86B;
 constexpr uint32_t kWcLive = 0xE94E77;
 constexpr uint32_t kWcCardFill = 0x141A2E;
-
-// Build a label-over-value column inside the details panel.
-struct WcDetailCell {
-  lv_obj_t *label;
-  lv_obj_t *value;
-};
-
-WcDetailCell makeDetailCell(lv_obj_t *parent, const char *labelText, int x, int y,
-                            int width, bool landscape) {
-  WcDetailCell cell;
-  cell.label = makeLabel(parent, labelText, &lv_font_montserrat_12, COL_INK_3);
-  lv_obj_set_style_text_letter_space(cell.label, 2, 0);
-  lv_obj_set_size(cell.label, width, 14);
-  lv_obj_set_pos(cell.label, x, y);
-
-  cell.value = makeLabel(parent, "--",
-                         landscape ? &lv_font_montserrat_18 : &lv_font_montserrat_16, COL_INK);
-  lv_label_set_long_mode(cell.value, LV_LABEL_LONG_DOT);
-  lv_obj_set_size(cell.value, width, landscape ? 24 : 22);
-  lv_obj_set_pos(cell.value, x, y + 20);
-  return cell;
-}
 
 // Tinted fallback used when a flag image isn't (yet) available — a rounded
 // rectangle with the TLA centered in it.
@@ -113,11 +91,11 @@ void buildWorldCupScreenCommon(WorldCupUi &ui, lv_obj_t *parent, bool landscape,
   lv_obj_set_style_text_align(ui.updated, LV_TEXT_ALIGN_RIGHT, 0);
   lv_obj_set_pos(ui.updated, screenW - 300 - (landscape ? 40 : 28), 53);
 
-  // ---- Hero panel ----------------------------------------------------------
+  // ---- Single hero panel (fills the available area) ----------------------
   const int panelX = landscape ? 40 : 28;
-  const int heroY = landscape ? 92 : 92;
+  const int heroY = 92;
   const int heroW = screenW - 2 * panelX;
-  const int heroH = landscape ? 230 : 470;
+  const int heroH = screenH - heroY - 24;
   ui.heroPanel = makeGlass(ui.root, heroW, heroH, 22);
   lv_obj_set_pos(ui.heroPanel, panelX, heroY);
 
@@ -126,202 +104,116 @@ void buildWorldCupScreenCommon(WorldCupUi &ui, lv_obj_t *parent, bool landscape,
   lv_obj_set_style_text_letter_space(ui.stageLabel, 2, 0);
   lv_obj_set_style_text_align(ui.stageLabel, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_size(ui.stageLabel, heroW - 40, 18);
-  lv_obj_set_pos(ui.stageLabel, 20, 16);
+  lv_obj_set_pos(ui.stageLabel, 20, 22);
 
   const int flagW = 160;
   const int flagH = 104;
-  const int teamShortFont = landscape ? 22 : 22;
+
+  // Helper for creating + styling the flag widget pair (image + fallback box).
+  auto makeFlagPair = [&](lv_obj_t *&img, lv_obj_t *&fallback, int x, int y) {
+    img = lv_img_create(ui.heroPanel);
+    lv_obj_set_size(img, flagW, flagH);
+    lv_obj_set_pos(img, x, y);
+    lv_obj_set_style_radius(img, 6, 0);
+    lv_obj_set_style_clip_corner(img, true, 0);
+    lv_obj_add_flag(img, LV_OBJ_FLAG_HIDDEN);
+    fallback = makeFlagFallback(ui.heroPanel, flagW, flagH);
+    lv_obj_set_pos(fallback, x, y);
+  };
+
+  auto makeTeamLabels = [&](lv_obj_t *&shortLbl, lv_obj_t *&fullLbl,
+                            int x, int y, int width) {
+    shortLbl = makeLabel(ui.heroPanel, "TBD", &lv_font_montserrat_22, COL_INK);
+    lv_obj_set_style_text_align(shortLbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_letter_space(shortLbl, 2, 0);
+    lv_obj_set_size(shortLbl, width, 26);
+    lv_obj_set_pos(shortLbl, x, y);
+
+    fullLbl = makeLabel(ui.heroPanel, "", &lv_font_montserrat_12, COL_INK_3);
+    lv_label_set_long_mode(fullLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(fullLbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_size(fullLbl, width, 16);
+    lv_obj_set_pos(fullLbl, x, y + 28);
+  };
+
+  auto makeStatusPillAndDetails = [&](int pillY, int kickoffY, int venueY) {
+    ui.statusPill = makePlain(ui.heroPanel);
+    lv_obj_set_size(ui.statusPill, 200, 28);
+    lv_obj_set_pos(ui.statusPill, (heroW - 200) / 2, pillY);
+    lv_obj_set_style_radius(ui.statusPill, 14, 0);
+    lv_obj_set_style_bg_color(ui.statusPill, hex(kWcAccent), 0);
+    lv_obj_set_style_bg_opa(ui.statusPill, LV_OPA_20, 0);
+    lv_obj_set_style_border_width(ui.statusPill, 1, 0);
+    lv_obj_set_style_border_color(ui.statusPill, hex(kWcAccent), 0);
+    lv_obj_set_style_border_opa(ui.statusPill, LV_OPA_60, 0);
+
+    ui.statusPillLabel = makeLabel(ui.statusPill, "SCHEDULED",
+                                   &lv_font_montserrat_14, kWcAccent);
+    lv_obj_set_style_text_letter_space(ui.statusPillLabel, 2, 0);
+    lv_obj_set_style_text_align(ui.statusPillLabel, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(ui.statusPillLabel, 200);
+    lv_obj_align(ui.statusPillLabel, LV_ALIGN_CENTER, 0, 0);
+
+    ui.kickoffValue = makeLabel(ui.heroPanel, "--",
+                                &lv_font_montserrat_16, COL_INK);
+    lv_obj_set_style_text_align(ui.kickoffValue, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_letter_space(ui.kickoffValue, 1, 0);
+    lv_obj_set_size(ui.kickoffValue, heroW - 40, 22);
+    lv_obj_set_pos(ui.kickoffValue, 20, kickoffY);
+
+    ui.venueValue = makeLabel(ui.heroPanel, "--",
+                              &lv_font_montserrat_14, COL_INK_2);
+    lv_label_set_long_mode(ui.venueValue, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(ui.venueValue, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_size(ui.venueValue, heroW - 40, 20);
+    lv_obj_set_pos(ui.venueValue, 20, venueY);
+  };
+
+  auto makeScoreRow = [&](int y) {
+    // Big "0 - 0" digits in 48pt so the score reads from across the room.
+    const int cx = heroW / 2;
+    const int digitW = 64;
+    const int digitH = 64;
+    ui.scoreHome = makeLabel(ui.heroPanel, "0", &lv_font_montserrat_48, COL_INK);
+    lv_obj_set_style_text_align(ui.scoreHome, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_size(ui.scoreHome, digitW, digitH);
+    lv_obj_set_pos(ui.scoreHome, cx - digitW - 18, y);
+
+    ui.scoreSep = makeLabel(ui.heroPanel, "-", &lv_font_montserrat_48, COL_INK_3);
+    lv_obj_set_style_text_align(ui.scoreSep, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_size(ui.scoreSep, 36, digitH);
+    lv_obj_set_pos(ui.scoreSep, cx - 18, y);
+
+    ui.scoreAway = makeLabel(ui.heroPanel, "0", &lv_font_montserrat_48, COL_INK);
+    lv_obj_set_style_text_align(ui.scoreAway, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_size(ui.scoreAway, digitW, digitH);
+    lv_obj_set_pos(ui.scoreAway, cx + 18, y);
+  };
 
   if (landscape) {
-    // Three columns: home flag | score | away flag
+    // Three columns: home flag | score+status+details | away flag
     const int homeX = 44;
     const int awayX = heroW - 44 - flagW;
-    const int flagsY = 48;
+    const int flagsY = 64;
 
-    ui.flagHome = lv_img_create(ui.heroPanel);
-    lv_obj_set_size(ui.flagHome, flagW, flagH);
-    lv_obj_set_pos(ui.flagHome, homeX, flagsY);
-    lv_obj_set_style_radius(ui.flagHome, 6, 0);
-    lv_obj_set_style_clip_corner(ui.flagHome, true, 0);
-    lv_obj_add_flag(ui.flagHome, LV_OBJ_FLAG_HIDDEN);
-
-    ui.flagHomeFallback = makeFlagFallback(ui.heroPanel, flagW, flagH);
-    lv_obj_set_pos(ui.flagHomeFallback, homeX, flagsY);
-
-    ui.flagAway = lv_img_create(ui.heroPanel);
-    lv_obj_set_size(ui.flagAway, flagW, flagH);
-    lv_obj_set_pos(ui.flagAway, awayX, flagsY);
-    lv_obj_set_style_radius(ui.flagAway, 6, 0);
-    lv_obj_set_style_clip_corner(ui.flagAway, true, 0);
-    lv_obj_add_flag(ui.flagAway, LV_OBJ_FLAG_HIDDEN);
-
-    ui.flagAwayFallback = makeFlagFallback(ui.heroPanel, flagW, flagH);
-    lv_obj_set_pos(ui.flagAwayFallback, awayX, flagsY);
-
-    auto makeTeamLabels = [&](lv_obj_t *&shortLbl, lv_obj_t *&fullLbl, int x) {
-      shortLbl = makeLabel(ui.heroPanel, "TBD",
-                           &lv_font_montserrat_22, COL_INK);
-      lv_obj_set_style_text_align(shortLbl, LV_TEXT_ALIGN_CENTER, 0);
-      lv_obj_set_style_text_letter_space(shortLbl, 2, 0);
-      lv_obj_set_size(shortLbl, flagW, 26);
-      lv_obj_set_pos(shortLbl, x, 160);
-
-      fullLbl = makeLabel(ui.heroPanel, "",
-                          &lv_font_montserrat_12, COL_INK_3);
-      lv_label_set_long_mode(fullLbl, LV_LABEL_LONG_DOT);
-      lv_obj_set_style_text_align(fullLbl, LV_TEXT_ALIGN_CENTER, 0);
-      lv_obj_set_size(fullLbl, flagW, 16);
-      lv_obj_set_pos(fullLbl, x, 190);
-    };
-    makeTeamLabels(ui.teamHomeShort, ui.teamHomeFull, homeX);
-    makeTeamLabels(ui.teamAwayShort, ui.teamAwayFull, awayX);
-
-    // Score column in the middle.
-    const int scoreCenterX = heroW / 2;
-    ui.scoreHome = makeLabel(ui.heroPanel, "-", &lv_font_montserrat_22, COL_INK);
-    lv_obj_set_style_text_align(ui.scoreHome, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_size(ui.scoreHome, 60, 30);
-    lv_obj_set_pos(ui.scoreHome, scoreCenterX - 70, 90);
-
-    ui.scoreSep = makeLabel(ui.heroPanel, "vs", &lv_font_montserrat_14, COL_INK_3);
-    lv_obj_set_style_text_align(ui.scoreSep, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_size(ui.scoreSep, 24, 18);
-    lv_obj_set_pos(ui.scoreSep, scoreCenterX - 12, 96);
-
-    ui.scoreAway = makeLabel(ui.heroPanel, "-", &lv_font_montserrat_22, COL_INK);
-    lv_obj_set_size(ui.scoreAway, 60, 30);
-    lv_obj_set_pos(ui.scoreAway, scoreCenterX + 10, 90);
-
-    // Status pill anchored below the score area.
-    ui.statusPill = makePlain(ui.heroPanel);
-    lv_obj_set_size(ui.statusPill, 180, 26);
-    lv_obj_set_pos(ui.statusPill, scoreCenterX - 90, 140);
-    lv_obj_set_style_radius(ui.statusPill, 13, 0);
-    lv_obj_set_style_bg_color(ui.statusPill, hex(kWcAccent), 0);
-    lv_obj_set_style_bg_opa(ui.statusPill, LV_OPA_20, 0);
-    lv_obj_set_style_border_width(ui.statusPill, 1, 0);
-    lv_obj_set_style_border_color(ui.statusPill, hex(kWcAccent), 0);
-    lv_obj_set_style_border_opa(ui.statusPill, LV_OPA_60, 0);
-
-    ui.statusPillLabel = makeLabel(ui.statusPill, "SCHEDULED",
-                                   &lv_font_montserrat_12, kWcAccent);
-    lv_obj_set_style_text_letter_space(ui.statusPillLabel, 2, 0);
-    lv_obj_set_style_text_align(ui.statusPillLabel, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_width(ui.statusPillLabel, 180);
-    lv_obj_align(ui.statusPillLabel, LV_ALIGN_CENTER, 0, 0);
+    makeFlagPair(ui.flagHome, ui.flagHomeFallback, homeX, flagsY);
+    makeFlagPair(ui.flagAway, ui.flagAwayFallback, awayX, flagsY);
+    makeTeamLabels(ui.teamHomeShort, ui.teamHomeFull, homeX, 180, flagW);
+    makeTeamLabels(ui.teamAwayShort, ui.teamAwayFull, awayX, 180, flagW);
+    makeScoreRow(58);
+    makeStatusPillAndDetails(/*pillY=*/156, /*kickoffY=*/200, /*venueY=*/230);
   } else {
-    // Portrait: stack flag-A / score / flag-B.
+    // Portrait: vertical flow A flag → score+status → B flag.
     const int flagCenterX = (heroW - flagW) / 2;
 
-    ui.flagHome = lv_img_create(ui.heroPanel);
-    lv_obj_set_size(ui.flagHome, flagW, flagH);
-    lv_obj_set_pos(ui.flagHome, flagCenterX, 50);
-    lv_obj_set_style_radius(ui.flagHome, 6, 0);
-    lv_obj_set_style_clip_corner(ui.flagHome, true, 0);
-    lv_obj_add_flag(ui.flagHome, LV_OBJ_FLAG_HIDDEN);
+    makeFlagPair(ui.flagHome, ui.flagHomeFallback, flagCenterX, 60);
+    makeTeamLabels(ui.teamHomeShort, ui.teamHomeFull, 20, 178, heroW - 40);
 
-    ui.flagHomeFallback = makeFlagFallback(ui.heroPanel, flagW, flagH);
-    lv_obj_set_pos(ui.flagHomeFallback, flagCenterX, 50);
+    makeScoreRow(228);
+    makeStatusPillAndDetails(/*pillY=*/308, /*kickoffY=*/348, /*venueY=*/376);
 
-    ui.teamHomeShort = makeLabel(ui.heroPanel, "TBD",
-                                 &lv_font_montserrat_22, COL_INK);
-    lv_obj_set_style_text_align(ui.teamHomeShort, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_letter_space(ui.teamHomeShort, 2, 0);
-    lv_obj_set_size(ui.teamHomeShort, heroW - 40, 26);
-    lv_obj_set_pos(ui.teamHomeShort, 20, 162);
-
-    ui.teamHomeFull = makeLabel(ui.heroPanel, "", &lv_font_montserrat_12, COL_INK_3);
-    lv_label_set_long_mode(ui.teamHomeFull, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_align(ui.teamHomeFull, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_size(ui.teamHomeFull, heroW - 40, 16);
-    lv_obj_set_pos(ui.teamHomeFull, 20, 192);
-
-    // Score row in the middle.
-    ui.scoreHome = makeLabel(ui.heroPanel, "-", &lv_font_montserrat_22, COL_INK);
-    lv_obj_set_style_text_align(ui.scoreHome, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_size(ui.scoreHome, 60, 30);
-    lv_obj_set_pos(ui.scoreHome, heroW / 2 - 70, 222);
-
-    ui.scoreSep = makeLabel(ui.heroPanel, "vs", &lv_font_montserrat_14, COL_INK_3);
-    lv_obj_set_style_text_align(ui.scoreSep, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_size(ui.scoreSep, 24, 18);
-    lv_obj_set_pos(ui.scoreSep, heroW / 2 - 12, 228);
-
-    ui.scoreAway = makeLabel(ui.heroPanel, "-", &lv_font_montserrat_22, COL_INK);
-    lv_obj_set_size(ui.scoreAway, 60, 30);
-    lv_obj_set_pos(ui.scoreAway, heroW / 2 + 10, 222);
-
-    ui.statusPill = makePlain(ui.heroPanel);
-    lv_obj_set_size(ui.statusPill, 180, 26);
-    lv_obj_set_pos(ui.statusPill, (heroW - 180) / 2, 268);
-    lv_obj_set_style_radius(ui.statusPill, 13, 0);
-    lv_obj_set_style_bg_color(ui.statusPill, hex(kWcAccent), 0);
-    lv_obj_set_style_bg_opa(ui.statusPill, LV_OPA_20, 0);
-    lv_obj_set_style_border_width(ui.statusPill, 1, 0);
-    lv_obj_set_style_border_color(ui.statusPill, hex(kWcAccent), 0);
-    lv_obj_set_style_border_opa(ui.statusPill, LV_OPA_60, 0);
-
-    ui.statusPillLabel = makeLabel(ui.statusPill, "SCHEDULED",
-                                   &lv_font_montserrat_12, kWcAccent);
-    lv_obj_set_style_text_letter_space(ui.statusPillLabel, 2, 0);
-    lv_obj_set_style_text_align(ui.statusPillLabel, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_width(ui.statusPillLabel, 180);
-    lv_obj_align(ui.statusPillLabel, LV_ALIGN_CENTER, 0, 0);
-
-    ui.flagAway = lv_img_create(ui.heroPanel);
-    lv_obj_set_size(ui.flagAway, flagW, flagH);
-    lv_obj_set_pos(ui.flagAway, flagCenterX, 306);
-    lv_obj_set_style_radius(ui.flagAway, 6, 0);
-    lv_obj_set_style_clip_corner(ui.flagAway, true, 0);
-    lv_obj_add_flag(ui.flagAway, LV_OBJ_FLAG_HIDDEN);
-
-    ui.flagAwayFallback = makeFlagFallback(ui.heroPanel, flagW, flagH);
-    lv_obj_set_pos(ui.flagAwayFallback, flagCenterX, 306);
-
-    ui.teamAwayShort = makeLabel(ui.heroPanel, "TBD",
-                                 &lv_font_montserrat_22, COL_INK);
-    lv_obj_set_style_text_align(ui.teamAwayShort, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_letter_space(ui.teamAwayShort, 2, 0);
-    lv_obj_set_size(ui.teamAwayShort, heroW - 40, 26);
-    lv_obj_set_pos(ui.teamAwayShort, 20, 416);
-
-    ui.teamAwayFull = makeLabel(ui.heroPanel, "", &lv_font_montserrat_12, COL_INK_3);
-    lv_label_set_long_mode(ui.teamAwayFull, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_align(ui.teamAwayFull, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_size(ui.teamAwayFull, heroW - 40, 16);
-    lv_obj_set_pos(ui.teamAwayFull, 20, 446);
-  }
-
-  // ---- Details panel ------------------------------------------------------
-  const int detailsY = heroY + heroH + 16;
-  const int detailsW = heroW;
-  const int detailsH = landscape ? 120 : 200;
-  lv_obj_t *details = makeGlass(ui.root, detailsW, detailsH, 22);
-  lv_obj_set_pos(details, panelX, detailsY);
-
-  if (landscape) {
-    const int colW = (detailsW - 32) / 4;
-    auto kickoff  = makeDetailCell(details, "KICKOFF",  16 + 0 * colW, 20, colW - 8, true);
-    auto venue    = makeDetailCell(details, "VENUE",    16 + 1 * colW, 20, colW - 8, true);
-    auto stage    = makeDetailCell(details, "STAGE",    16 + 2 * colW, 20, colW - 8, true);
-    auto referee  = makeDetailCell(details, "REFEREE",  16 + 3 * colW, 20, colW - 8, true);
-    ui.kickoffValue     = kickoff.value;
-    ui.venueValue       = venue.value;
-    ui.stageDetailValue = stage.value;
-    ui.refereeValue     = referee.value;
-
-    // Second row could carry richer info later (matchday, attendance). For
-    // now leave room for a future expansion line below each value.
-  } else {
-    const int rowH = 44;
-    auto kickoff  = makeDetailCell(details, "KICKOFF",  20, 18 + 0 * rowH, detailsW - 40, false);
-    auto venue    = makeDetailCell(details, "VENUE",    20, 18 + 1 * rowH, detailsW - 40, false);
-    auto stage    = makeDetailCell(details, "STAGE",    20, 18 + 2 * rowH, detailsW - 40, false);
-    auto referee  = makeDetailCell(details, "REFEREE",  20, 18 + 3 * rowH, detailsW - 40, false);
-    ui.kickoffValue     = kickoff.value;
-    ui.venueValue       = venue.value;
-    ui.stageDetailValue = stage.value;
-    ui.refereeValue     = referee.value;
+    makeFlagPair(ui.flagAway, ui.flagAwayFallback, flagCenterX, 414);
+    makeTeamLabels(ui.teamAwayShort, ui.teamAwayFull, 20, 532, heroW - 40);
   }
 }
 
@@ -335,25 +227,13 @@ void buildWorldCupPortraitScreen(lv_obj_t *parent) {
                             PORTRAIT_WIDTH, PORTRAIT_HEIGHT);
 }
 
-// Format the "stage / matchday / group" header line.
+// Header line showing only the tournament stage (group / KO round).
 String wcStageHeader(const WorldCupMatch &m) {
-  String s;
-  if (!m.group.isEmpty()) {
-    s = m.group;
-    s.toUpperCase();
-  } else if (!m.stage.isEmpty()) {
-    String stg = m.stage;
-    stg.replace('_', ' ');
-    stg.toUpperCase();
-    s = stg;
-  }
-  if (m.matchday > 0) {
-    if (!s.isEmpty()) s += "  /  ";
-    s += "MATCHDAY ";
-    s += String(m.matchday);
-  }
-  if (s.isEmpty()) s = "FIXTURE";
-  return s;
+  if (m.stage.isEmpty()) return "FIXTURE";
+  String stg = m.stage;
+  stg.replace('_', ' ');
+  stg.toUpperCase();
+  return stg;
 }
 
 void wcApplyTeamToUi(WorldCupUi &ui, const WorldCupMatch &m) {
@@ -375,18 +255,15 @@ void wcApplyTeamToUi(WorldCupUi &ui, const WorldCupMatch &m) {
 }
 
 void wcApplyScoreAndStatus(WorldCupUi &ui, const WorldCupMatch &m) {
-  const bool hasScore = (m.home.score >= 0 && m.away.score >= 0);
+  // Always show a numeric score — pre-kickoff matches read as 0 - 0.
+  const int home = (m.home.score >= 0) ? m.home.score : 0;
+  const int away = (m.away.score >= 0) ? m.away.score : 0;
   char hBuf[8], aBuf[8];
-  if (hasScore) {
-    snprintf(hBuf, sizeof(hBuf), "%d", m.home.score);
-    snprintf(aBuf, sizeof(aBuf), "%d", m.away.score);
-  } else {
-    snprintf(hBuf, sizeof(hBuf), "-");
-    snprintf(aBuf, sizeof(aBuf), "-");
-  }
+  snprintf(hBuf, sizeof(hBuf), "%d", home);
+  snprintf(aBuf, sizeof(aBuf), "%d", away);
   lv_label_set_text(ui.scoreHome, hBuf);
   lv_label_set_text(ui.scoreAway, aBuf);
-  lv_label_set_text(ui.scoreSep, hasScore ? "-" : "vs");
+  lv_label_set_text(ui.scoreSep, "-");
 
   String pillText;
   uint32_t pillColor = kWcAccent;
@@ -439,11 +316,7 @@ void wcApplyDetailsToUi(WorldCupUi &ui, const WorldCupMatch &m) {
     lv_label_set_text(ui.kickoffValue, "--");
   }
   lv_label_set_text(ui.venueValue, m.venue.isEmpty() ? "--" : m.venue.c_str());
-  lv_label_set_text(ui.stageDetailValue, wcStageHeader(m).c_str());
-  lv_label_set_text(ui.refereeValue, m.referee.isEmpty() ? "--" : m.referee.c_str());
-
-  String header = wcStageHeader(m);
-  if (!header.isEmpty()) lv_label_set_text(ui.stageLabel, header.c_str());
+  lv_label_set_text(ui.stageLabel, wcStageHeader(m).c_str());
 }
 
 void updateWorldCupUiOne(WorldCupUi &ui) {
@@ -455,14 +328,12 @@ void updateWorldCupUiOne(WorldCupUi &ui) {
     lv_label_set_text(ui.teamHomeFull, "");
     lv_label_set_text(ui.teamAwayShort, "--");
     lv_label_set_text(ui.teamAwayFull, "");
-    lv_label_set_text(ui.scoreHome, "-");
-    lv_label_set_text(ui.scoreAway, "-");
-    lv_label_set_text(ui.scoreSep, "vs");
+    lv_label_set_text(ui.scoreHome, "0");
+    lv_label_set_text(ui.scoreAway, "0");
+    lv_label_set_text(ui.scoreSep, "-");
     lv_label_set_text(ui.statusPillLabel, "--");
     lv_label_set_text(ui.kickoffValue, "--");
     lv_label_set_text(ui.venueValue, "--");
-    lv_label_set_text(ui.stageDetailValue, "--");
-    lv_label_set_text(ui.refereeValue, "--");
     lv_label_set_text(ui.updated, msg);
     applyFlagToImg(ui.flagHome, ui.flagHomeFallback,
                    lv_obj_get_child(ui.flagHomeFallback, 0), wcFlagHome, "");
