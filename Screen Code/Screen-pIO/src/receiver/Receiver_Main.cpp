@@ -1,6 +1,6 @@
 #include "Receiver_Main.h"
 
-Receiver_Main::Receiver_Main(const char* wcApiKey) : worldCup(wcApiKey) {
+Receiver_Main::Receiver_Main() {
     motorEnabled = false;
     motorStep = 0;
     lastMotorMove = 0;
@@ -17,7 +17,6 @@ void Receiver_Main::init() {
     webServer.init();
     camReceiver.init();
     lightSensor.init();
-    worldCup.begin();
 }
 
 void Receiver_Main::loop() {
@@ -45,7 +44,6 @@ void Receiver_Main::loop() {
     camReceiver.processGesture();
     webServer.getRequest();
     lightSensor.readLight();
-    worldCup.update();
     
     // Apply WebServer rotation to motor
     if (webServer.requestedRotation != currentRotation) {

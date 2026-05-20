@@ -1,10 +1,7 @@
 #include <Arduino.h>
 #include "Receiver_Main.h"
 
-// football-data.org API key (free tier: 10 requests/min)
-const char* WC_API_KEY = "d0421e6457b34162a0c59a71f9384405";
-
-Receiver_Main receiverApp(WC_API_KEY);
+Receiver_Main receiverApp;
 
 void setup() {
     Serial.begin(115200);

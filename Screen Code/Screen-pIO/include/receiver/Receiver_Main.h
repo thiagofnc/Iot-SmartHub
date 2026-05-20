@@ -7,7 +7,6 @@
 #include "WebServerManager.h"
 #include "BLE_Cam_Receiver.h"
 #include "Local_Light_Sensor.h"
-#include "WorldCupFetcher.h"
 
 class Receiver_Main {
 private:
@@ -16,7 +15,6 @@ private:
     WebServerManager webServer;
     BLE_Cam_Receiver camReceiver;
     Local_Light_Sensor lightSensor;
-    WorldCupFetcher worldCup;
 
     bool motorEnabled;
     unsigned long lastMotorMove;
@@ -24,7 +22,7 @@ private:
     int currentRotation;
 
 public:
-    Receiver_Main(const char* wcApiKey);
+    Receiver_Main();
     void init();
     void loop();
 };
