@@ -159,35 +159,36 @@ struct BatteryUi {
 BatteryUi batteryPortraitUi;
 
 // ---------------------------------------------------------------------------
-// Nearby BLE devices (placeholder data — no real scan yet)
+// Nearby BLE devices
 // ---------------------------------------------------------------------------
-constexpr int kNearbyDeviceCount = 10;
+constexpr int kNearbyMaxDeviceCount = 10;
+int nearbyDeviceCount = 10;
 constexpr int kNearbyMaxServices = 3;
 
 struct NearbyDevice {
-  const char *name;
-  const char *mac;
+  String name;
+  String mac;
   int rssi;                 // dBm
-  const char *vendor;       // decoded from company ID
+  String vendor;            // decoded from company ID
   uint16_t companyId;       // BLE assigned numbers — 0 if unknown
-  const char *services[kNearbyMaxServices];
+  String services[kNearbyMaxServices];
   int serviceCount;
   int txPower;              // dBm; INT_MIN if not advertised
   uint32_t accent;          // tint colour for the avatar + chips
   const char *icon;         // LV_SYMBOL_*
 };
 
-const NearbyDevice kNearbyDevices[kNearbyDeviceCount] = {
-    {"AirPods Pro",     "A4:C1:38:2B:5F:E2", -42, "Apple",     0x004C, {"Audio", "Battery", nullptr},   2,     -16, 0x7CD4F2, LV_SYMBOL_AUDIO},
-    {"Pixel Buds A",    "D8:71:33:8C:91:0B", -58, "Google",    0x00E0, {"Fast Pair", "Audio", nullptr}, 2,     -12, 0x38EF7D, LV_SYMBOL_BLUETOOTH},
+NearbyDevice nearbyDevices[kNearbyMaxDeviceCount] = {
+    {"AirPods Pro",     "A4:C1:38:2B:5F:E2", -42, "Apple",     0x004C, {"Audio", "Battery", ""},   2,     -16, 0x7CD4F2, LV_SYMBOL_AUDIO},
+    {"Pixel Buds A",    "D8:71:33:8C:91:0B", -58, "Google",    0x00E0, {"Fast Pair", "Audio", ""}, 2,     -12, 0x38EF7D, LV_SYMBOL_BLUETOOTH},
     {"Galaxy Watch 5",  "7C:2E:DD:42:1A:F0", -67, "Samsung",   0x0075, {"HID", "Heart Rate", "Battery"},3,      -8, 0xE94E77, LV_SYMBOL_LOOP},
-    {"Mi Band 7",       "C8:0F:10:88:42:E1", -73, "Xiaomi",    0x0157, {"Battery", "HID", nullptr},     2,      -4, 0xFFB86B, LV_SYMBOL_BATTERY_2},
-    {"Surface Earbuds", "38:78:62:55:DD:01", -81, "Microsoft", 0x0006, {"HID", "Audio", nullptr},       2,      -8, 0x5EB6D6, LV_SYMBOL_AUDIO},
-    {"Tile Mate",       "6E:8C:1A:00:7B:5F", -85, "Tile",      0x00E4, {"Tile Service", nullptr, nullptr}, 1,  -20, 0xB85C3A, LV_SYMBOL_GPS},
-    {"(no name)",       "5E:2A:11:F3:0C:9D", -88, "Unknown",   0x0000, {nullptr, nullptr, nullptr},     0, INT_MIN, 0x6E7585, LV_SYMBOL_BLUETOOTH},
-    {"Nest Cam IQ",     "18:B4:30:99:12:74", -76, "Google",    0x00E0, {"Setup", "Fast Pair", nullptr}, 2,     -12, 0x38EF7D, LV_SYMBOL_EYE_OPEN},
-    {"WH-1000XM5",      "A0:E0:AF:42:51:B8", -65, "Sony",      0x012D, {"Audio", "Battery", nullptr},   2,      -8, 0xFF2975, LV_SYMBOL_AUDIO},
-    {"Soundcore Q30",   "84:5C:F3:1E:9A:22", -71, "Anker",     0x048D, {"A2DP", "Battery", nullptr},    2,      -4, 0x2F6B9C, LV_SYMBOL_AUDIO},
+    {"Mi Band 7",       "C8:0F:10:88:42:E1", -73, "Xiaomi",    0x0157, {"Battery", "HID", ""},     2,      -4, 0xFFB86B, LV_SYMBOL_BATTERY_2},
+    {"Surface Earbuds", "38:78:62:55:DD:01", -81, "Microsoft", 0x0006, {"HID", "Audio", ""},       2,      -8, 0x5EB6D6, LV_SYMBOL_AUDIO},
+    {"Tile Mate",       "6E:8C:1A:00:7B:5F", -85, "Tile",      0x00E4, {"Tile Service", "", ""}, 1,  -20, 0xB85C3A, LV_SYMBOL_GPS},
+    {"(no name)",       "5E:2A:11:F3:0C:9D", -88, "Unknown",   0x0000, {"", "", ""},     0, INT_MIN, 0x6E7585, LV_SYMBOL_BLUETOOTH},
+    {"Nest Cam IQ",     "18:B4:30:99:12:74", -76, "Google",    0x00E0, {"Setup", "Fast Pair", ""}, 2,     -12, 0x38EF7D, LV_SYMBOL_EYE_OPEN},
+    {"WH-1000XM5",      "A0:E0:AF:42:51:B8", -65, "Sony",      0x012D, {"Audio", "Battery", ""},   2,      -8, 0xFF2975, LV_SYMBOL_AUDIO},
+    {"Soundcore Q30",   "84:5C:F3:1E:9A:22", -71, "Anker",     0x048D, {"A2DP", "Battery", ""},    2,      -4, 0x2F6B9C, LV_SYMBOL_AUDIO},
 };
 
 struct NearbyCardUi {
@@ -207,7 +208,7 @@ struct NearbyUi {
   StatusRow status;
   lv_obj_t *headerCount = nullptr;
   lv_obj_t *list = nullptr;          // scrollable container holding the cards
-  NearbyCardUi cards[kNearbyDeviceCount];
+  NearbyCardUi cards[kNearbyMaxDeviceCount];
 };
 NearbyUi nearbyUi;
 NearbyUi nearbyPortraitUi;

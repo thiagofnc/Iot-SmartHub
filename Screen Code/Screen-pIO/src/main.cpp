@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <BLEDevice.h>
+#include <BLEScan.h>
 #include <ArduinoJson.h>
 #include <FS.h>
 #include <HTTPClient.h>
@@ -675,6 +677,8 @@ void updateWeatherUi() {
 
 #include "features/serial_commands.inc"
 
+#include "features/screen_connectivity.inc"
+
 // Boot / tick
 // ---------------------------------------------------------------------------
 void initLvgl() {
@@ -963,6 +967,7 @@ void setup() {
   updateBatteryUi();
 
   Serial.println("UI ready. Commands: clock|c, weather|w, port, battery|b, battery-port|bp, nearby|n, nearby-port|np, wc, wc-port|wcp, music|m, rotate, toggle|t, up|^, down|v, left|<, right|>, refresh|r, spotify|sp, dev<number> <0-100>, d<0-255>, show <name>, hide, help");
+  beginScreenConnectivity();
   startWeatherPollTask();
   startSpotifyPollTask();
 }
@@ -977,6 +982,7 @@ void loop() {
   tickWorldCup();
   tickWeather();
   tickLinkState();
+  tickScreenConnectivity();
 
   lv_timer_handler();
   delay(5);

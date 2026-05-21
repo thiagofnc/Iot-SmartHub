@@ -4,3 +4,4 @@
 # Local secrets/config
 Screen Code/Screen-pIO/include/AppConfig.h
 Camera Code/Camera-pIO/include/CameraConfig.h
+Main Code/Main-pIO/include/MainConfig.h

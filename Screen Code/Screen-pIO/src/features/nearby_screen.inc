@@ -114,7 +114,7 @@ void makeNearbyCard(NearbyCardUi &ui, lv_obj_t *parent, const NearbyDevice &dev,
   const int rightColW = landscape ? 168 : 110;
   const int bodyW = cardW - bodyX - rightColW - 6;
 
-  ui.name = makeLabel(ui.card, dev.name, landscape ? &lv_font_montserrat_18 : &lv_font_montserrat_16, COL_INK);
+  ui.name = makeLabel(ui.card, dev.name.c_str(), landscape ? &lv_font_montserrat_18 : &lv_font_montserrat_16, COL_INK);
   lv_label_set_long_mode(ui.name, LV_LABEL_LONG_CLIP);
   lv_obj_set_size(ui.name, bodyW, landscape ? 24 : 22);
   lv_obj_set_pos(ui.name, bodyX, landscape ? 6 : 8);
@@ -122,10 +122,10 @@ void makeNearbyCard(NearbyCardUi &ui, lv_obj_t *parent, const NearbyDevice &dev,
   char metaBuf[80];
   if (dev.companyId != 0x0000) {
     snprintf(metaBuf, sizeof(metaBuf), "%s  /  %s  /  0x%04X",
-             dev.mac, dev.vendor, dev.companyId);
+             dev.mac.c_str(), dev.vendor.c_str(), dev.companyId);
   } else {
     snprintf(metaBuf, sizeof(metaBuf), "%s  /  %s  /  no CID",
-             dev.mac, dev.vendor);
+             dev.mac.c_str(), dev.vendor.c_str());
   }
   ui.meta = makeLabel(ui.card, metaBuf, &lv_font_montserrat_12, COL_INK_3);
   lv_label_set_long_mode(ui.meta, LV_LABEL_LONG_DOT);
@@ -149,9 +149,9 @@ void makeNearbyCard(NearbyCardUi &ui, lv_obj_t *parent, const NearbyDevice &dev,
     lv_obj_set_style_text_color(empty, hex(COL_INK_4), 0);
   }
   for (int i = 0; i < dev.serviceCount && i < kNearbyMaxServices; ++i) {
-    if (!dev.services[i]) continue;
+    if (dev.services[i].isEmpty()) continue;
     ui.chips[i] = lv_label_create(ui.chipRow);
-    styleChip(ui.chips[i], dev.services[i], dev.accent);
+    styleChip(ui.chips[i], dev.services[i].c_str(), dev.accent);
   }
 
   // Right column: estimated distance + signal-strength bars.
@@ -219,8 +219,8 @@ void buildNearbyScreenCommon(NearbyUi &ui, lv_obj_t *parent, bool landscape,
   lv_obj_set_pos(eyebrow, eyebrowX + 32, 51);
 
   char countBuf[40];
-  snprintf(countBuf, sizeof(countBuf), "%d DEVICES  /  PLACEHOLDER FEED",
-           kNearbyDeviceCount);
+  snprintf(countBuf, sizeof(countBuf), "%d DEVICES  /  BLE SCAN",
+           nearbyDeviceCount);
   ui.headerCount = makeLabel(ui.root, countBuf, &lv_font_montserrat_12, COL_INK_3);
   lv_obj_set_style_text_letter_space(ui.headerCount, 1, 0);
   if (landscape) {
@@ -262,9 +262,30 @@ void buildNearbyScreenCommon(NearbyUi &ui, lv_obj_t *parent, bool landscape,
 
   const int cardW = landscape ? kNearbyLandscapeCardW : kNearbyPortraitCardW;
   const int cardH = landscape ? kNearbyLandscapeCardH : kNearbyPortraitCardH;
-  for (int i = 0; i < kNearbyDeviceCount; ++i) {
-    makeNearbyCard(ui.cards[i], ui.list, kNearbyDevices[i], cardW, cardH, landscape);
+  for (int i = 0; i < nearbyDeviceCount && i < kNearbyMaxDeviceCount; ++i) {
+    makeNearbyCard(ui.cards[i], ui.list, nearbyDevices[i], cardW, cardH, landscape);
   }
+}
+
+void refreshNearbyList(NearbyUi &ui) {
+  if (!ui.list) return;
+  lv_obj_clean(ui.list);
+
+  const bool landscape = (&ui == &nearbyUi);
+  const int cardW = landscape ? kNearbyLandscapeCardW : kNearbyPortraitCardW;
+  const int cardH = landscape ? kNearbyLandscapeCardH : kNearbyPortraitCardH;
+  for (int i = 0; i < nearbyDeviceCount && i < kNearbyMaxDeviceCount; ++i) {
+    makeNearbyCard(ui.cards[i], ui.list, nearbyDevices[i], cardW, cardH, landscape);
+  }
+
+  char countBuf[40];
+  snprintf(countBuf, sizeof(countBuf), "%d DEVICES  /  BLE SCAN", nearbyDeviceCount);
+  if (ui.headerCount) lv_label_set_text(ui.headerCount, countBuf);
+}
+
+void refreshNearbyScreens() {
+  refreshNearbyList(nearbyUi);
+  refreshNearbyList(nearbyPortraitUi);
 }
 
 }  // namespace
