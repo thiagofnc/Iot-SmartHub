@@ -919,9 +919,13 @@ void tickLinkState() {
 
 void setup() {
   Serial.begin(115200);
+  Serial1.begin(MAIN_UART_BAUD, SERIAL_8N1, MAIN_UART_RX_PIN, MAIN_UART_TX_PIN);
   delay(150);
   Serial.println();
   Serial.println("Booting IoT-SmartHub dashboard");
+  Serial.printf("Main UART on RX=%d TX=%d @ %u baud\n",
+                MAIN_UART_RX_PIN, MAIN_UART_TX_PIN,
+                static_cast<unsigned>(MAIN_UART_BAUD));
   randomSeed(micros());
 
   initDisplayHardware();

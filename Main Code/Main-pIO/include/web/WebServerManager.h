@@ -18,6 +18,14 @@ public:
   double remoteTemp = 0.0;
   double remoteHumidity = 0.0;
 
+  // Battery levels reported via /battery?<slot>=<percent>. -1 until a first
+  // value arrives. Slot names mirror Apple Shortcuts setups: phone, ipad,
+  // watch, device.
+  int phoneBattery = -1;
+  int ipadBattery = -1;
+  int watchBattery = -1;
+  int deviceBattery = -1;
+
 private:
   void connectWifi();
   void updateOpenWeather();
@@ -29,6 +37,7 @@ private:
   void handleBrightness();
   void handleRotation();
   void handleWeather();
+  void handleBattery();
 
   WebServer server;
   double currentTemp = 0.0;

@@ -1,12 +1,15 @@
 // Serial command handling
 // ---------------------------------------------------------------------------
-void handleSerialCommands() {
-  while (Serial.available()) {
-    const char ch = static_cast<char>(Serial.read());
+// Pump bytes from any text stream (USB serial monitor + the UART link from the
+// main ESP) into the same command dispatcher. Each stream needs its own line
+// buffer so partial lines don't bleed into each other.
+void handleSerialCommandsFrom(Stream& in, String& buffer) {
+  while (in.available()) {
+    const char ch = static_cast<char>(in.read());
     if (ch == '\r') continue;
     if (ch == '\n') {
-      String raw = serialCommandBuffer;
-      serialCommandBuffer = "";
+      String raw = buffer;
+      buffer = "";
       raw.trim();
       String cmd = raw;
       cmd.toLowerCase();
@@ -149,9 +152,14 @@ void handleSerialCommands() {
       Serial.printf("unknown: %s\n", cmd.c_str());
       return;
     }
-    if (serialCommandBuffer.length() < 64) serialCommandBuffer += ch;
-    else { serialCommandBuffer = ""; Serial.println("cmd too long"); return; }
+    if (buffer.length() < 64) buffer += ch;
+    else { buffer = ""; Serial.println("cmd too long"); return; }
   }
+}
+
+void handleSerialCommands() {
+  handleSerialCommandsFrom(Serial, serialCommandBuffer);
+  handleSerialCommandsFrom(Serial1, mainUartCommandBuffer);
 }
 
 void tickSpotify() {

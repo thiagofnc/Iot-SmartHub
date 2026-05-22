@@ -45,6 +45,7 @@ void WebServerManager::begin() {
   server.on("/api/brightness", HTTP_GET, [this]() { handleBrightness(); });
   server.on("/api/rotation", HTTP_GET, [this]() { handleRotation(); });
   server.on("/api/weather", HTTP_GET, [this]() { handleWeather(); });
+  server.on("/battery", HTTP_GET, [this]() { handleBattery(); });
   server.collectHeaders(kHeaderKeys, sizeof(kHeaderKeys) / sizeof(kHeaderKeys[0]));
   server.begin();
   Serial.println("HTTP web server ready");
@@ -139,6 +140,26 @@ void WebServerManager::handleRotation() {
   }
   requestedRotation = constrain(server.arg("value").toInt(), 0, 90);
   server.send(200, "text/plain", "OK");
+}
+
+void WebServerManager::handleBattery() {
+  // Accept ?phone= / ?ipad= / ?watch= / ?device= in a single request (Apple
+  // Shortcuts posts one slot at a time but we tolerate batched calls).
+  bool updated = false;
+  const struct { const char* key; int* dst; } slots[] = {
+      {"phone",  &phoneBattery},
+      {"ipad",   &ipadBattery},
+      {"watch",  &watchBattery},
+      {"device", &deviceBattery},
+  };
+  for (const auto& s : slots) {
+    if (!server.hasArg(s.key)) continue;
+    const int v = constrain(server.arg(s.key).toInt(), 0, 100);
+    *s.dst = v;
+    Serial.printf("Battery %s = %d%%\n", s.key, v);
+    updated = true;
+  }
+  server.send(updated ? 200 : 400, "text/plain", updated ? "OK" : "use ?phone=85");
 }
 
 void WebServerManager::handleWeather() {

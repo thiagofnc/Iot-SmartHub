@@ -14,6 +14,22 @@ namespace {
 // regenerated on every Edge Impulse model export.
 constexpr float kHandConfThreshold = 0.32f;
 
+// ---- Gesture UART (camera -> main ESP) -----------------------------------
+// One byte per detected gesture: 'U','D','L','R'. RX=44 / TX=43 on the XIAO,
+// crossed to the main ESP's TX=43 / RX=44 (UART1).
+constexpr int kGestureUartRx = 44;
+constexpr int kGestureUartTx = 43;
+constexpr uint32_t kGestureUartBaud = 115200;
+
+char gestureCharFor(const char* gesture) {
+  if (gesture == nullptr) return 0;
+  if (strcmp(gesture, "UP") == 0)    return 'U';
+  if (strcmp(gesture, "DOWN") == 0)  return 'D';
+  if (strcmp(gesture, "LEFT") == 0)  return 'L';
+  if (strcmp(gesture, "RIGHT") == 0) return 'R';
+  return 0;
+}
+
 // ---- Camera --------------------------------------------------------------
 
 bool g_camInitialized = false;
@@ -320,9 +336,9 @@ void runInferenceCycle() {
     Serial.write('\n');
   } else {
     const char* g = g_gesture.update(millis(), hasHand, cx, cy);
-    if (g != nullptr) {
-      Serial.printf("[GESTURE] %s\n", g);
-    }
+    Serial.printf("[GESTURE] %s\n", g != nullptr ? g : "NOTHING");
+    const char code = gestureCharFor(g);
+    if (code != 0) Serial1.write(static_cast<uint8_t>(code));
   }
 
   esp_camera_fb_return(fb);
@@ -332,12 +348,16 @@ void runInferenceCycle() {
 
 void setup() {
   Serial.begin(921600);
+  Serial1.begin(kGestureUartBaud, SERIAL_8N1, kGestureUartRx, kGestureUartTx);
   delay(500);
   Serial.println();
   Serial.println("SmartHub camera firmware (inference + gestures)");
   Serial.printf("PSRAM: %s, free heap: %u bytes\n",
                 psramFound() ? "yes" : "no",
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
+  Serial.printf("Gesture UART on RX=%d TX=%d @ %u baud\n",
+                kGestureUartRx, kGestureUartTx,
+                static_cast<unsigned>(kGestureUartBaud));
 
   if (!ensureFeatureBuffer()) return;
   if (!initCamera()) return;

@@ -303,6 +303,14 @@ unsigned long lastAutoRotate = 0;
 long currentLocalEpochUtc = 0;
 uint8_t currentBacklightBrightness = BACKLIGHT_BRIGHTNESS;
 String serialCommandBuffer;
+String mainUartCommandBuffer;
+
+// UART link from the main controller ESP. Carries forwarded gestures ("up",
+// "down", "left", "right") and battery updates ("dev<n> <pct>") — the exact
+// command strings the USB serial dispatcher already understands.
+constexpr int MAIN_UART_RX_PIN = 44;
+constexpr int MAIN_UART_TX_PIN = 43;
+constexpr uint32_t MAIN_UART_BAUD = 115200;
 bool colonVisible = true;
 unsigned long lastColonBlink = 0;
 bool ntpConfigured = false;
