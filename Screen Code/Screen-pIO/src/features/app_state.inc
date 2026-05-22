@@ -305,9 +305,8 @@ uint8_t currentBacklightBrightness = BACKLIGHT_BRIGHTNESS;
 String serialCommandBuffer;
 String mainUartCommandBuffer;
 
-// UART link from the main controller ESP. Carries forwarded gestures ("up",
-// "down", "left", "right") and battery updates ("dev<n> <pct>") — the exact
-// command strings the USB serial dispatcher already understands.
+// UART link from the main controller ESP. It carries the same command strings
+// accepted by the USB serial dispatcher, such as gestures and battery updates.
 constexpr int MAIN_UART_RX_PIN = 44;
 constexpr int MAIN_UART_TX_PIN = 43;
 constexpr uint32_t MAIN_UART_BAUD = 115200;
