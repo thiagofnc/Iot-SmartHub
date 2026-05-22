@@ -110,12 +110,15 @@ void handleBatteryClient(WiFiClient &client) {
 }  // namespace
 
 void beginScreenConnectivity() {
-  BLEDevice::init("SmartHub-Screen");
-  screenBleScan = BLEDevice::getScan();
-  screenBleScan->setActiveScan(true);
-  screenBleScan->setInterval(100);
-  screenBleScan->setWindow(80);
-  Serial.println("Screen BLE scanner ready");
+  // BLE disabled: BLEDevice::init() runs out of internal RAM after all the
+  // LVGL screens are built, causing a boot loop. Re-enable once the screen
+  // RAM footprint is reduced or BLE is moved off this ESP.
+  // BLEDevice::init("SmartHub-Screen");
+  // screenBleScan = BLEDevice::getScan();
+  // screenBleScan->setActiveScan(true);
+  // screenBleScan->setInterval(100);
+  // screenBleScan->setWindow(80);
+  // Serial.println("Screen BLE scanner ready");
 }
 
 void tickScreenConnectivity() {
@@ -131,12 +134,13 @@ void tickScreenConnectivity() {
     if (client) handleBatteryClient(client);
   }
 
-  if (!screenBleScan) return;
-  const unsigned long now = millis();
-  if (now - lastBleScanMs < SCREEN_BLE_SCAN_INTERVAL_MS) return;
-  lastBleScanMs = now;
-
-  BLEScanResults results = screenBleScan->start(SCREEN_BLE_SCAN_SECONDS, false);
-  applyBleScanResults(results);
-  screenBleScan->clearResults();
+  // BLE scan disabled along with BLEDevice::init() in beginScreenConnectivity().
+  // if (!screenBleScan) return;
+  // const unsigned long now = millis();
+  // if (now - lastBleScanMs < SCREEN_BLE_SCAN_INTERVAL_MS) return;
+  // lastBleScanMs = now;
+  //
+  // BLEScanResults results = screenBleScan->start(SCREEN_BLE_SCAN_SECONDS, false);
+  // applyBleScanResults(results);
+  // screenBleScan->clearResults();
 }
