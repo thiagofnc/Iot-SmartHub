@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"c:\\\\Users\\\\hirtj\\\\Documents\\\\IoT\\\\Project\\\\Iot-SmartHub\\\\\")",
+      "Read(//c/Users/hirtj/Documents/IoT/Project/**)",
+      "Bash(find '/c/Users/hirtj/Documents/IoT/' -name '*.pdf' 2>/dev/null | head -20)",
+      "Read(//c/Users/hirtj/Documents/IoT//**)",
+      "Bash(pdfinfo \"/c/Users/hirtj/Documents/IoT/Project/Iot-SmartHub/Screen Code/Screen-pIO/Final Report IoT.pdf\")",
+      "Bash(cp fig-000.png architecture_uml.png)",
+      "Bash(cp fig-001.png architecture_initial.png)",
+      "Bash(cp fig-002.png lora_block.png)",
+      "Bash(cp fig-003.png wifi_ble.png)",
+      "Bash(cp fig-005.png gesture_arch.png)",
+      "Bash(rm -f main.aux main.log main.out main.toc)",
+      "Read(//c/c/Users/hirtj/Documents/IoT/Project/Iot-SmartHub/Screen Code/Screen-pIO/**)",
+      "Bash(pdflatex -interaction=nonstopmode -halt-on-error main.tex)",
+      "Read(//tmp/**)",
+      "Bash(grep -n '\\\\\\\\cite{' main.tex)"
+    ]
+  }
+}
